@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+Melbourne,Australia,MEL,64,63,32.9575438893481,683027.3936894343,27261852.724981867,26.390221728731618

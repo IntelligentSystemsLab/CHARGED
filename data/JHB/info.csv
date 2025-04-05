@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+Johannesburg,SouthAfrica,JHB,61,47,40.291345471713605,91024.16011357239,2629201.8895053463,20.0811519330842

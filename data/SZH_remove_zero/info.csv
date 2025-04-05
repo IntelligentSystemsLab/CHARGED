@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+Shenzhen,China,SZH,2138,1402,41.95321426823552,65136608.20615964,1929459272.4312048,12.478292167972809

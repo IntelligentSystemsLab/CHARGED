@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+LosAngeles,UnitedStates,LOA,498,224,86.70261425391611,1925280.0022147307,13369061.154359626,7.022338965971672

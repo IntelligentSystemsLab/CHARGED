@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+Amsterdam,Netherlands,AMS,3526,2449,47.36294378245436,28808415.08728032,239175391.29159072,3.5160434705980443

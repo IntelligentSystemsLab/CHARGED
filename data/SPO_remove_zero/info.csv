@@ -1,0 +1,2 @@
+city,country,abbreviation,total_piles,total_stations,DBSCAN_eps,total_duration,total_volume,avg_power
+SaoPaulo,Brazil,SPO,47,45,34.96669500667566,82869.69974872666,1330621.8528507221,12.957549092132712
