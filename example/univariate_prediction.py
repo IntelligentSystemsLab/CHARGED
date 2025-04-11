@@ -4,6 +4,10 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/10 16:16
+
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import logging
 import os
 import sys
