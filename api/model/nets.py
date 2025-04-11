@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from pmdarima import auto_arima
 from statsmodels.tsa.ar_model import AutoReg
 from statsmodels.tsa.arima.model import ARIMA
@@ -79,20 +80,24 @@ class Arima:
     def predict(self, train_valid_feat, test_feat):
         time_len, node = test_feat.shape
         train_valid_feat = train_valid_feat[:-self.pred_len, :]
-        preds = np.zeros((time_len, node))
         warnings.filterwarnings("ignore", category=UserWarning,
                                 message=".*Maximum Likelihood optimization failed to converge.*")
-        for j in range(node):  # Train and predict for each node
+
+        def fit_predict(j):
             fit_series = train_valid_feat[:, j]
-
-            # Train ARIMA model on each node
-            model=auto_arima(fit_series)
-
-            # Predict using the ARIMA model
+            model = auto_arima(
+                fit_series,
+                start_p=0, max_p=2,
+                start_q=0, max_q=2,
+            )
+            pred_node = []
             for i in range(time_len):
                 pred = model.predict(n_periods=self.pred_len)
-                preds[i, j] = pred[-1]  # Ensure single value is assigned
+                pred_node.append(pred[-1])  # 只取最后一个值
+            return pred_node
 
+        preds = Parallel(n_jobs=10)(delayed(fit_predict)(j) for j in range(node))
+        preds=np.array(preds).T
         return preds
 
 
