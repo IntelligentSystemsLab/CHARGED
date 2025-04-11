@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument('--total_fold', type=int, default=6, help="The fold used for spliting data in cross-validation")
     parser.add_argument('--pred_type', type=str, default='region', help="What level of prediction.")
     parser.add_argument('--batch_size', type=int, default=32, help="The batch size of fine-tuning.")
-    parser.add_argument('--epoch', type=int, default=20, help="The max epoch of the training process.")
+    parser.add_argument('--epoch', type=int, default=30, help="The max epoch of the training process.")
     parser.add_argument('--is_train', action='store_true', default=True)
 
     return parser.parse_args()
