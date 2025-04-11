@@ -22,7 +22,7 @@ from api.utils import random_seed, get_n_feature
 if __name__ == '__main__':
     TRAIN_RATIO, VAL_RATIO, TEST_RATIO = 0.8, 0.1, 0.1
     args = parse_args()
-    base_path = f'{args.output_path}{args.city}/{args.feature}-{args.auxiliary}-{args.model}-{args.pred_type}-{args.seq_l}-{args.pre_len}-{args.fold}'
+    base_path = f'{args.output_path}{args.city}/{args.model}/{args.feature}-{args.auxiliary}-{args.pred_type}-{args.seq_l}-{args.pre_len}-{args.fold}'
     new_path = base_path
     counter = 0
     while os.path.exists(new_path):

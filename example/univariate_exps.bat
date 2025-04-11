@@ -1,7 +1,7 @@
 @echo off
 
 set cities=SPO AMS JHB LOA MEL SZH
-set models=ar lo arima fcnn lstm
+set models=arima ar lo fcnn lstm
 set folds=1 2 3 4 5 6
 
 for %%c in (%cities%) do (
