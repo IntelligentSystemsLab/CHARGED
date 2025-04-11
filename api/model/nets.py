@@ -50,20 +50,21 @@ class Ar:
         """
         time_len, node = test_feat.shape
         train_valid_feat = train_valid_feat[:-self.pred_len, :]
-        preds = np.zeros((time_len, node))
 
-        for j in range(node):  # Train and predict for each node
+        def fit_predict(j):
             fit_series = train_valid_feat[:, j]
-
-            # Train AR model on each node
             model = AutoReg(fit_series, lags=self.lags)
             model_fitted = model.fit()
+            pred_node = []
             for i in range(time_len):
                 start = len(fit_series) + self.pred_len
                 end = start
                 pred = model_fitted.predict(start=start, end=end)
-                preds[i, j] = pred[0]  # Ensure single value is assigned
+                pred_node.append(pred[-1])
+            return pred_node
 
+        preds = Parallel(n_jobs=10)(delayed(fit_predict)(j) for j in range(node))
+        preds=np.array(preds).T
         return preds
 
 
