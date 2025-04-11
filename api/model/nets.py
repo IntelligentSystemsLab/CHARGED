@@ -69,14 +69,11 @@ class Ar:
 
 
 class Arima:
-    def __init__(self, pred_len, p=1, d=1, q=1):
+    def __init__(self, pred_len):
         """
         Initialize the ARIMA model parameters.
         """
         self.pred_len = pred_len
-        self.p = p
-        self.d = d
-        self.q = q
 
     def predict(self, train_valid_feat, test_feat):
         time_len, node = test_feat.shape
