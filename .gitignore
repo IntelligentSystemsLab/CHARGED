@@ -6,3 +6,4 @@
 /api/trainer/__pycache__
 data/AMS/distance.csv
 data/AMS/duration.csv
+/example/result
