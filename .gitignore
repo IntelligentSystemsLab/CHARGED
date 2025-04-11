@@ -4,3 +4,5 @@
 /api/dataset/__pycache__
 /api/model/__pycache__
 /api/trainer/__pycache__
+data/AMS/distance.csv
+data/AMS/duration.csv
