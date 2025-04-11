@@ -6,7 +6,7 @@
 # @Last Modified Time : 2025/4/11 2:03
 import torch
 
-from api.model.baselines import Lstm,Lo,Ar,Arima,Fcnn
+from api.model.nets import Lstm,Lo,Ar,Arima,Fcnn
 
 
 class PredictionModel(object):
