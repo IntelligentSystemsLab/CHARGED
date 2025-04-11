@@ -9,6 +9,7 @@ import os
 import torch
 import torch.nn as nn
 import numpy as np
+import pandas as pd
 from statsmodels.tsa.ar_model import AutoReg
 from statsmodels.tsa.arima.model import ARIMA
 import warnings
@@ -84,7 +85,7 @@ class Arima:
             fit_series = train_valid_feat[:, j]
 
             # Train ARIMA model on each node
-            model = ARIMA(fit_series, order=(self.p, self.d, self.q))
+            model = ARIMA(fit_series, order=(self.p, self.d, self.q), enforce_stationarity=False, enforce_invertibility=False)
             model_fitted = model.fit()
 
             # Predict using the ARIMA model
