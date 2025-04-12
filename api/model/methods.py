@@ -14,6 +14,8 @@ from statsmodels.tsa.ar_model import AutoReg
 import torch.nn.functional as F
 import warnings
 
+from api.model.layers import ModernTCN_RevIN, ModernTCN_Stage, ModernTCN_Flatten_Head
+
 
 class Lo:
     def __init__(self, pre_len):
@@ -215,18 +217,28 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None, chunk_size=128):
+    def forward(self,feat, extra_feat=None, chunk_size=1024):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B, node, seq_len, channel = x.shape
         x_enc = x.view(B * node, seq_len, channel)
         outputs = []
-        for i in range(0, x_enc.shape[0], chunk_size):
-            x_chunk = x_enc[i: i + chunk_size]
-            dec_out_chunk = self.forecast(x_chunk)
-            features_chunk = dec_out_chunk[:, -1, :]
-            outputs.append(features_chunk)
+        current_chunk_size = chunk_size
+        start_idx = 0
+        while start_idx < x_enc.shape[0]:
+            try:
+                x_chunk = x_enc[start_idx: start_idx + current_chunk_size]
+                dec_out_chunk = self.forecast(x_chunk)
+                features_chunk = dec_out_chunk[:, -1, :]
+                outputs.append(features_chunk)
+                start_idx += current_chunk_size
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    current_chunk_size = max(1, current_chunk_size // 2)
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
         out = torch.cat(outputs, dim=0)
         out = out.view(B, node)
         return out
@@ -256,6 +268,7 @@ class FreTS(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(self.hidden_size, self.pre_length)
         )
+        self.final_linear = nn.Linear(self.feature_size, 1)
 
     # dimension extension
     def tokenEmb(self, x):
@@ -312,24 +325,146 @@ class FreTS(nn.Module):
         y = torch.view_as_complex(y)
         return y
 
-    def forward(self, feat, extra_feat=None):
+    def forward(self, feat, extra_feat=None, chunk_size=1024):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B_ori, node, seq_len, channel = x.shape
         x_enc = x.view(B_ori * node, seq_len, channel)
+        outputs = []
+        current_chunk_size = chunk_size
+        start_idx = 0
+        while start_idx < x_enc.shape[0]:
+            try:
+                x_chunk = x_enc[start_idx: start_idx + current_chunk_size]
+                B, T, N = x_chunk.shape
+                x_chunk = self.tokenEmb(x_chunk)
+                bias = x_chunk
+                x_chunk = self.MLP_channel(x_chunk, B, N, T)
+                x_chunk = self.MLP_temporal(x_chunk, B, N, T)
+                x_chunk = x_chunk + bias
+                x_chunk = self.fc(x_chunk.reshape(B, N, -1)).permute(0, 2, 1)
+                x_chunk = self.final_linear(x_chunk)
+                x_chunk = x_chunk.squeeze(-1)
+                outputs.append(x_chunk)
+                start_idx += current_chunk_size
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    current_chunk_size = max(1, current_chunk_size // 2)
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
+        out = torch.cat(outputs, dim=0)
+        out = out.view(B, node)
+        return out
 
-        # x: [Batch, Input length, Channel]
-        B, T, N = x_enc.shape
-        # embedding x: [B, N, T, D]
-        x = self.tokenEmb(x)
-        bias = x
-        # [B, N, T, D]
-        # if self.channel_independence == '1':
-        #     x = self.MLP_channel(x, B, N, T)
-        x = self.MLP_channel(x, B, N, T)
-        # [B, N, T, D]
-        x = self.MLP_temporal(x, B, N, T)
-        x = x + bias
-        x = self.fc(x.reshape(B, N, -1)).permute(0, 2, 1)
+
+
+class ModernTCN(nn.Module):
+    def __init__(self,n_fea, patch_size=16,patch_stride=8, downsample_ratio=2, ffn_ratio=2, num_blocks=[1,1,1,1],
+                 large_size=[31,29,27,13], small_size=[5,5,5,5], dims=[256,256,256,256], dw_dims=[256,256,256,256],
+                 small_kernel_merged=False, backbone_dropout=0.1, head_dropout=0.1, use_multi_scale=True, revin=True, affine=True,
+                 subtract_last=False, seq_len=512, individual=False, target_window=96):
+
+        super(ModernTCN, self).__init__()
+        c_in=n_fea
+        # RevIN
+        self.revin = revin
+        if self.revin: self.revin_layer = ModernTCN_RevIN(c_in, affine=affine, subtract_last=subtract_last)
+
+        # stem layer & down sampling layers
+        self.downsample_layers = nn.ModuleList()
+        stem = nn.Sequential(
+            nn.Conv1d(1, dims[0], kernel_size=patch_size, stride=patch_stride),
+            nn.BatchNorm1d(dims[0])
+        )
+        self.downsample_layers.append(stem)
+
+        self.num_stage = len(num_blocks)
+        if self.num_stage > 1:
+            for i in range(self.num_stage-1):
+                downsample_layer = nn.Sequential(
+                    nn.BatchNorm1d(dims[i]),
+                    nn.Conv1d(dims[i], dims[i + 1], kernel_size=downsample_ratio, stride=downsample_ratio),
+                )
+            self.downsample_layers.append(downsample_layer)
+
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride
+        self.downsample_ratio = downsample_ratio
+
+        # backbone
+        self.num_stage = len(num_blocks)
+        self.stages = nn.ModuleList()
+        for stage_idx in range(self.num_stage):
+            layer = ModernTCN_Stage(ffn_ratio, num_blocks[stage_idx], large_size[stage_idx], small_size[stage_idx], dmodel=dims[stage_idx],
+                          dw_model=dw_dims[stage_idx], nvars=n_fea, small_kernel_merged=small_kernel_merged, drop=backbone_dropout)
+            self.stages.append(layer)
+
+
+
+        # head
+        patch_num = seq_len // patch_stride
+        self.n_vars = c_in
+        self.individual = individual
+        d_model = dims[self.num_stage-1]
+
+        if use_multi_scale:
+            self.head_nf = d_model * patch_num
+            self.head = ModernTCN_Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window,
+                                     head_dropout=head_dropout)
+        else:
+
+            if patch_num % pow(downsample_ratio,(self.num_stage - 1)) == 0:
+                self.head_nf = d_model * patch_num // pow(downsample_ratio,(self.num_stage - 1))
+            else:
+                self.head_nf = d_model * (patch_num // pow(downsample_ratio, (self.num_stage - 1))+1)
+            self.head = ModernTCN_Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window,
+                                     head_dropout=head_dropout)
+
+
+    def forward_feature(self, x, te=None):
+
+        B,M,L=x.shape
+        x = x.unsqueeze(-2)
+
+        for i in range(self.num_stage):
+            B, M, D, N = x.shape
+            x = x.reshape(B * M, D, N)
+            if i==0:
+                if self.patch_size != self.patch_stride:
+                    pad_len = self.patch_size - self.patch_stride
+                    pad = x[:,:,-1:].repeat(1,1,pad_len)
+                    x = torch.cat([x,pad],dim=-1)
+            else:
+                if N % self.downsample_ratio != 0:
+                    pad_len = self.downsample_ratio - (N % self.downsample_ratio)
+                    x = torch.cat([x, x[:, :, -pad_len:]],dim=-1)
+            x = self.downsample_layers[i](x)
+            _, D_, N_ = x.shape
+            x = x.reshape(B, M, D_, N_)
+            x = self.stages[i](x)
         return x
+
+    def forward(self, x, te=None):
+
+        # instance norm
+        if self.revin:
+            x = x.permute(0, 2, 1)
+            x = self.revin_layer(x, 'norm')
+            x = x.permute(0, 2, 1)
+        x = self.forward_feature(
+            x,te)
+        x = self.head(
+            x)
+        # de-instance norm
+        if self.revin:
+            x = x.permute(0, 2, 1)
+            x = self.revin_layer(x, 'denorm')
+            x = x.permute(0, 2, 1)
+        return x
+
+    def structural_reparam(self):
+        for m in self.modules():
+            if hasattr(m, 'merge_kernel'):
+                m.merge_kernel()

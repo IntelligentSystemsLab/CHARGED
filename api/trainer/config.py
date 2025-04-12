@@ -45,10 +45,12 @@ class PredictionTrainer(object):
             self,
             epoch,
     ):
+
         valid_loss = 1000
         self.ev_model.model.train()
         for _ in tqdm(range(epoch), desc='Training'):
             for j, data in enumerate(self.ev_dataset.train_loader):
+                torch.cuda.empty_cache()
                 feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
                     extra_feat=None
@@ -63,6 +65,7 @@ class PredictionTrainer(object):
 
             # validation
             for j, data in enumerate(self.ev_dataset.valid_loader):
+                torch.cuda.empty_cache()
                 feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
                     extra_feat=None
@@ -89,6 +92,7 @@ class PredictionTrainer(object):
                 self.ev_model.load_model(model_path=model_path)
             self.ev_model.model.eval()
             for j, data in enumerate(self.ev_dataset.test_loader):
+                torch.cuda.empty_cache()
                 feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
                     extra_feat=None
