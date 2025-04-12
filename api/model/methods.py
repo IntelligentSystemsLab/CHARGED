@@ -217,7 +217,7 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None, chunk_size=1024):
+    def forward(self,feat, extra_feat=None, chunk_size=256):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
@@ -325,7 +325,7 @@ class FreTS(nn.Module):
         y = torch.view_as_complex(y)
         return y
 
-    def forward(self, feat, extra_feat=None, chunk_size=1024):
+    def forward(self, feat, extra_feat=None, chunk_size=256):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
@@ -449,7 +449,7 @@ class ModernTCN(nn.Module):
             x = self.stages[i](x)
         return x
 
-    def forward(self, feat, extra_feat=None, chunk_size=1024):
+    def forward(self, feat, extra_feat=None, chunk_size=256):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
@@ -488,3 +488,5 @@ class ModernTCN(nn.Module):
         for m in self.modules():
             if hasattr(m, 'merge_kernel'):
                 m.merge_kernel()
+
+
