@@ -19,6 +19,7 @@ class EVDataset(object):
             feature,
             auxiliary,
             data_path,
+            max_stations=300,
     ):
         super(EVDataset, self).__init__()
         self.feature = feature
@@ -45,6 +46,17 @@ class EVDataset(object):
         stations_info = pd.read_csv(f'{self.data_path}stations.csv', header=0)
         stations_info = stations_info.set_index("station_id")
         stations_info.index = stations_info.index.astype(str)
+
+        if len(stations_info) > max_stations:
+            top_stations = stations_info.sort_values(by='avg_power', ascending=False).head(max_stations)
+            top_station_ids = top_stations.index.tolist()
+            self.feat = self.feat[top_station_ids]
+            e_price_df = pd.read_csv(f'{self.data_path}e_price.csv', index_col=0, header=0)
+            s_price_df = pd.read_csv(f'{self.data_path}s_price.csv', index_col=0, header=0)
+            self.e_price = price_scaler.fit_transform(e_price_df[top_station_ids])
+            self.s_price = price_scaler.fit_transform(s_price_df[top_station_ids])
+            stations_info = top_stations
+
         lat_long = stations_info.loc[self.feat.columns, ['latitude', 'longitude']].values
         lat_norm = (lat_long[:, 0] +90) / 180
         lon_norm = (lat_long[:, 1] +180) / 360
@@ -73,6 +85,7 @@ class EVDataset(object):
                                                               self.weather[add_feat].values[:, np.newaxis, np.newaxis],
                                                               self.feat.shape[1], axis=1)], axis=2)
             self.extra_feat = self.extra_feat[:, :, 1:]
+
         self.feat = np.array(self.feat)
 
     def split_cross_validation(
