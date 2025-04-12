@@ -4,6 +4,7 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/11 2:14
+import math
 
 import torch
 import torch.nn as nn
@@ -13,8 +14,9 @@ from pmdarima import auto_arima
 from statsmodels.tsa.ar_model import AutoReg
 import torch.nn.functional as F
 import warnings
+from einops import rearrange
 
-from api.model.layers import ModernTCN_RevIN, ModernTCN_Stage, ModernTCN_Flatten_Head
+from api.model.layers import ModernTCN_RevIN, ModernTCN_Stage, ModernTCN_Flatten_Head, AttentionLayer, FullAttention,MultiPatchFormer_Encoder
 
 
 class Lo:
@@ -489,3 +491,303 @@ class ModernTCN(nn.Module):
             if hasattr(m, 'merge_kernel'):
                 m.merge_kernel()
 
+
+
+class MultiPatchFormer(nn.Module):
+    def __init__(self, seq_len,pred_len,n_fea,e_layers=2,d_model=256,d_ff=1024,n_heads=8,dropout=0.1):
+        super(MultiPatchFormer, self).__init__()
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+        self.d_channel = n_fea
+        self.N = e_layers
+        # Embedding
+        self.d_model = d_model
+        self.d_hidden = d_ff
+        self.n_heads = n_heads
+        self.mask = True
+        self.dropout = dropout
+
+        self.stride1 = 3
+        self.patch_len1 = 4
+        self.stride2 = 4
+        self.patch_len2 = 6
+        self.stride3 = 3
+        self.patch_len3 = 8
+        self.stride4 = 2
+        self.patch_len4 = 10
+        self.patch_num1 = int((self.seq_len - self.patch_len2) // self.stride2) + 2
+        self.padding_patch_layer1 = nn.ReplicationPad1d((0, self.stride1))
+        self.padding_patch_layer2 = nn.ReplicationPad1d((0, self.stride2))
+        self.padding_patch_layer3 = nn.ReplicationPad1d((0, self.stride3))
+        self.padding_patch_layer4 = nn.ReplicationPad1d((0, self.stride4))
+
+        self.shared_MHA = nn.ModuleList(
+            [
+                AttentionLayer(
+                    FullAttention(mask_flag=self.mask),
+                    d_model=self.d_model,
+                    n_heads=self.n_heads,
+                )
+                for _ in range(self.N)
+            ]
+        )
+
+        self.shared_MHA_ch = nn.ModuleList(
+            [
+                AttentionLayer(
+                    FullAttention(mask_flag=self.mask),
+                    d_model=self.d_model,
+                    n_heads=self.n_heads,
+                )
+                for _ in range(self.N)
+            ]
+        )
+
+        self.encoder_list = nn.ModuleList(
+            [
+                MultiPatchFormer_Encoder(
+                    d_model=self.d_model,
+                    mha=self.shared_MHA[ll],
+                    d_hidden=self.d_hidden,
+                    dropout=self.dropout,
+                    channel_wise=False,
+                )
+                for ll in range(self.N)
+            ]
+        )
+
+        self.encoder_list_ch = nn.ModuleList(
+            [
+                MultiPatchFormer_Encoder(
+                    d_model=self.d_model,
+                    mha=self.shared_MHA_ch[0],
+                    d_hidden=self.d_hidden,
+                    dropout=self.dropout,
+                    channel_wise=True,
+                )
+                for ll in range(self.N)
+            ]
+        )
+
+        pe = torch.zeros(self.patch_num1, self.d_model)
+        for pos in range(self.patch_num1):
+            for i in range(0, self.d_model, 2):
+                wavelength = 10000 ** ((2 * i) / self.d_model)
+                pe[pos, i] = math.sin(pos / wavelength)
+                pe[pos, i + 1] = math.cos(pos / wavelength)
+        pe = pe.unsqueeze(0)  # add a batch dimention to your pe matrix
+        self.register_buffer("pe", pe)
+
+        self.embedding_channel = nn.Conv1d(
+            in_channels=self.d_model * self.patch_num1,
+            out_channels=self.d_model,
+            kernel_size=1,
+        )
+
+        self.embedding_patch_1 = torch.nn.Conv1d(
+            in_channels=1,
+            out_channels=self.d_model // 4,
+            kernel_size=self.patch_len1,
+            stride=self.stride1,
+        )
+        self.embedding_patch_2 = torch.nn.Conv1d(
+            in_channels=1,
+            out_channels=self.d_model // 4,
+            kernel_size=self.patch_len2,
+            stride=self.stride2,
+        )
+        self.embedding_patch_3 = torch.nn.Conv1d(
+            in_channels=1,
+            out_channels=self.d_model // 4,
+            kernel_size=self.patch_len3,
+            stride=self.stride3,
+        )
+        self.embedding_patch_4 = torch.nn.Conv1d(
+            in_channels=1,
+            out_channels=self.d_model // 4,
+            kernel_size=self.patch_len4,
+            stride=self.stride4,
+        )
+
+        self.out_linear_1 = torch.nn.Linear(self.d_model, self.pred_len // 8)
+        self.out_linear_2 = torch.nn.Linear(
+            self.d_model + self.pred_len // 8, self.pred_len // 8
+        )
+        self.out_linear_3 = torch.nn.Linear(
+            self.d_model + 2 * self.pred_len // 8, self.pred_len // 8
+        )
+        self.out_linear_4 = torch.nn.Linear(
+            self.d_model + 3 * self.pred_len // 8, self.pred_len // 8
+        )
+        self.out_linear_5 = torch.nn.Linear(
+            self.d_model + self.pred_len // 2, self.pred_len // 8
+        )
+        self.out_linear_6 = torch.nn.Linear(
+            self.d_model + 5 * self.pred_len // 8, self.pred_len // 8
+        )
+        self.out_linear_7 = torch.nn.Linear(
+            self.d_model + 6 * self.pred_len // 8, self.pred_len // 8
+        )
+        self.out_linear_8 = torch.nn.Linear(
+            self.d_model + 7 * self.pred_len // 8,
+            self.pred_len - 7 * (self.pred_len // 8),
+        )
+
+        self.remap = torch.nn.Linear(self.d_model, self.seq_len)
+        self.final_linear = nn.Linear(n_fea, 1)
+
+    def forecast(self, x_enc):
+        # Normalization
+        means = x_enc.mean(1, keepdim=True).detach()
+        x_enc = x_enc - means
+        stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+        x_enc /= stdev
+
+        # Multi-scale embedding
+        x_i = x_enc.permute(0, 2, 1)
+
+        x_i_p1 = x_i
+        x_i_p2 = self.padding_patch_layer2(x_i)
+        x_i_p3 = self.padding_patch_layer3(x_i)
+        x_i_p4 = self.padding_patch_layer4(x_i)
+        encoding_patch1 = self.embedding_patch_1(
+            rearrange(x_i_p1, "b c l -> (b c) l").unsqueeze(-1).permute(0, 2, 1)
+        ).permute(0, 2, 1)
+        encoding_patch2 = self.embedding_patch_2(
+            rearrange(x_i_p2, "b c l -> (b c) l").unsqueeze(-1).permute(0, 2, 1)
+        ).permute(0, 2, 1)
+        encoding_patch3 = self.embedding_patch_3(
+            rearrange(x_i_p3, "b c l -> (b c) l").unsqueeze(-1).permute(0, 2, 1)
+        ).permute(0, 2, 1)
+        encoding_patch4 = self.embedding_patch_4(
+            rearrange(x_i_p4, "b c l -> (b c) l").unsqueeze(-1).permute(0, 2, 1)
+        ).permute(0, 2, 1)
+
+        encoding_patch = (
+            torch.cat(
+                (encoding_patch1, encoding_patch2, encoding_patch3, encoding_patch4),
+                dim=-1,
+            )
+            + self.pe
+        )
+        # Temporal encoding
+        for i in range(self.N):
+            encoding_patch = self.encoder_list[i](encoding_patch)[0]
+
+        # Channel-wise encoding
+        x_patch_c = rearrange(
+            encoding_patch, "(b c) p d -> b c (p d)", b=x_enc.shape[0], c=self.d_channel
+        )
+        x_ch = self.embedding_channel(x_patch_c.permute(0, 2, 1)).transpose(
+            1, 2
+        )  # [b c d]
+
+        encoding_1_ch = self.encoder_list_ch[0](x_ch)[0]
+
+        # Semi Auto-regressive
+        forecast_ch1 = self.out_linear_1(encoding_1_ch)
+        forecast_ch2 = self.out_linear_2(
+            torch.cat((encoding_1_ch, forecast_ch1), dim=-1)
+        )
+        forecast_ch3 = self.out_linear_3(
+            torch.cat((encoding_1_ch, forecast_ch1, forecast_ch2), dim=-1)
+        )
+        forecast_ch4 = self.out_linear_4(
+            torch.cat((encoding_1_ch, forecast_ch1, forecast_ch2, forecast_ch3), dim=-1)
+        )
+        forecast_ch5 = self.out_linear_5(
+            torch.cat(
+                (encoding_1_ch, forecast_ch1, forecast_ch2, forecast_ch3, forecast_ch4),
+                dim=-1,
+            )
+        )
+        forecast_ch6 = self.out_linear_6(
+            torch.cat(
+                (
+                    encoding_1_ch,
+                    forecast_ch1,
+                    forecast_ch2,
+                    forecast_ch3,
+                    forecast_ch4,
+                    forecast_ch5,
+                ),
+                dim=-1,
+            )
+        )
+        forecast_ch7 = self.out_linear_7(
+            torch.cat(
+                (
+                    encoding_1_ch,
+                    forecast_ch1,
+                    forecast_ch2,
+                    forecast_ch3,
+                    forecast_ch4,
+                    forecast_ch5,
+                    forecast_ch6,
+                ),
+                dim=-1,
+            )
+        )
+        forecast_ch8 = self.out_linear_8(
+            torch.cat(
+                (
+                    encoding_1_ch,
+                    forecast_ch1,
+                    forecast_ch2,
+                    forecast_ch3,
+                    forecast_ch4,
+                    forecast_ch5,
+                    forecast_ch6,
+                    forecast_ch7,
+                ),
+                dim=-1,
+            )
+        )
+
+        final_forecast = torch.cat(
+            (
+                forecast_ch1,
+                forecast_ch2,
+                forecast_ch3,
+                forecast_ch4,
+                forecast_ch5,
+                forecast_ch6,
+                forecast_ch7,
+                forecast_ch8,
+            ),
+            dim=-1,
+        ).permute(0, 2, 1)
+
+        # De-Normalization
+        dec_out = final_forecast * (
+            stdev[:, 0].unsqueeze(1).repeat(1, self.pred_len, 1)
+        )
+        dec_out = dec_out + (means[:, 0].unsqueeze(1).repeat(1, self.pred_len, 1))
+        return dec_out
+
+    def forward(self, feat, extra_feat=None):
+        x = feat.unsqueeze(-1)
+        if extra_feat is not None:
+            x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
+        B_ori, node, seq_len, channel = x.shape
+        x_enc = x.view(B_ori * node, seq_len, channel)
+        outputs = []
+        current_chunk_size = self.chunk_size
+        start_idx = 0
+        while start_idx < x_enc.shape[0]:
+            try:
+                x_chunk = x_enc[start_idx: start_idx + current_chunk_size]
+                dec_out = self.forecast(x_chunk)
+                dec_out = self.final_linear(dec_out)
+                dec_out = dec_out.squeeze(-1)
+                outputs.append(dec_out)
+                start_idx += current_chunk_size
+            except RuntimeError as e:
+                if "CUDA" in str(e):
+                    current_chunk_size = max(1, current_chunk_size // 2)
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
+        out = torch.cat(outputs, dim=0)
+        out = out.view(B_ori, node)
+        return out
