@@ -217,14 +217,14 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None, chunk_size=256):
+    def forward(self,feat, extra_feat=None):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B_ori, node, seq_len, channel = x.shape
         x_enc = x.view(B_ori * node, seq_len, channel)
         outputs = []
-        current_chunk_size = chunk_size
+        current_chunk_size = self.chunk_size
         start_idx = 0
         while start_idx < x_enc.shape[0]:
             try:
@@ -325,14 +325,14 @@ class FreTS(nn.Module):
         y = torch.view_as_complex(y)
         return y
 
-    def forward(self, feat, extra_feat=None, chunk_size=256):
+    def forward(self, feat, extra_feat=None):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B_ori, node, seq_len, channel = x.shape
         x_enc = x.view(B_ori * node, seq_len, channel)
         outputs = []
-        current_chunk_size = chunk_size
+        current_chunk_size = self.chunk_size
         start_idx = 0
         while start_idx < x_enc.shape[0]:
             try:
@@ -449,14 +449,14 @@ class ModernTCN(nn.Module):
             x = self.stages[i](x)
         return x
 
-    def forward(self, feat, extra_feat=None, chunk_size=256):
+    def forward(self, feat, extra_feat=None):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B_ori, node, seq_len, channel = x.shape
         x_enc = x.view(B_ori * node, seq_len, channel)
         outputs = []
-        current_chunk_size = chunk_size
+        current_chunk_size = self.chunk_size
         start_idx = 0
         while start_idx < x_enc.shape[0]:
             try:
@@ -488,3 +488,4 @@ class ModernTCN(nn.Module):
         for m in self.modules():
             if hasattr(m, 'merge_kernel'):
                 m.merge_kernel()
+
