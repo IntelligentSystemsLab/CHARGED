@@ -6,7 +6,7 @@
 # @Last Modified Time : 2025/4/11 2:03
 import torch
 
-from api.model.nets import Lstm,Lo,Ar,Arima,Fcnn
+from api.model.nets import Lstm,Lo,Ar,Arima,Fcnn,SegRNN
 
 
 class PredictionModel(object):
@@ -30,6 +30,8 @@ class PredictionModel(object):
             self.model = Arima(pred_len=pre_len, p=seq_l)
         elif model_name == 'fcnn':
             self.model = Fcnn(n_fea, node=num_node, seq=seq_l).to(device)
+        elif model_name == 'segrnn':
+            self.model = SegRNN(seq_len=seq_l,pred_len=pre_len,node=num_node,n_fea=n_fea).to(device)
 
     def load_model(self,model_path):
         state_dict = torch.load(model_path, weights_only=True)
