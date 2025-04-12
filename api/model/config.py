@@ -6,7 +6,7 @@
 # @Last Modified Time : 2025/4/11 2:03
 import torch
 
-from api.model.methods import Lstm, Lo, Ar, Arima, Fcnn, SegRNN, FreTS, ModernTCN
+from api.model.methods import Lstm, Lo, Ar, Arima, Fcnn, SegRNN, FreTS, ModernTCN, MultiPatchFormer
 
 
 class PredictionModel(object):
@@ -36,6 +36,8 @@ class PredictionModel(object):
             self.model = FreTS(seq_len=seq_l,pred_len=pre_len,n_fea=n_fea)
         elif model_name == 'moderntcn':
             self.model = ModernTCN(seq_len=seq_l,n_fea=n_fea,pred_len=pre_len)
+        elif model_name == 'multipatchformer':
+            self.model = MultiPatchFormer(seq_len=seq_l,n_fea=n_fea,pred_len=pre_len)
         self.model.chunk_size=512
 
     def load_model(self,model_path):
