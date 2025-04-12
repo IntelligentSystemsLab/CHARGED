@@ -216,7 +216,7 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None, chunk_size=256):
+    def forward(self,feat, extra_feat=None, chunk_size=128):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
