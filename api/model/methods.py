@@ -234,7 +234,7 @@ class SegRNN(nn.Module):
                 outputs.append(features_chunk)
                 start_idx += current_chunk_size
             except RuntimeError as e:
-                if "out of memory" in str(e):
+                if "CUDA" in str(e):
                     current_chunk_size = max(1, current_chunk_size // 2)
                     torch.cuda.empty_cache()
                 else:
@@ -349,7 +349,7 @@ class FreTS(nn.Module):
                 outputs.append(x_chunk)
                 start_idx += current_chunk_size
             except RuntimeError as e:
-                if "out of memory" in str(e):
+                if "CUDA" in str(e):
                     current_chunk_size = max(1, current_chunk_size // 2)
                     torch.cuda.empty_cache()
                 else:
@@ -475,7 +475,7 @@ class ModernTCN(nn.Module):
                 outputs.append(x_chunk)
                 start_idx += current_chunk_size
             except RuntimeError as e:
-                if "out of memory" in str(e):
+                if "CUDA" in str(e):
                     current_chunk_size = max(1, current_chunk_size // 2)
                     torch.cuda.empty_cache()
                 else:
@@ -488,5 +488,3 @@ class ModernTCN(nn.Module):
         for m in self.modules():
             if hasattr(m, 'merge_kernel'):
                 m.merge_kernel()
-
-
