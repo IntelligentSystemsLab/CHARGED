@@ -48,9 +48,9 @@ if __name__ == '__main__':
         data_path=f'{args.data_path}{args.city}_remove_zero/',
     )
     logging.info(
-        f"Running {args.model} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
+        f"Running {args.model} on {args.city} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
     print(
-        f"Running {args.model} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
+        f"Running {args.model} on {args.city} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
     num_node = ev_dataset.feat.shape[1] if args.pred_type == 'region' else 1
     n_fea = get_n_feature(ev_dataset.extra_feat)
     ev_model = PredictionModel(
@@ -79,7 +79,7 @@ if __name__ == '__main__':
         f"Split outcome - Training set: {len(ev_dataset.train_feat)}, Validation set: {len(ev_dataset.valid_feat)}, Test set: {len(ev_dataset.test_feat)}")
     if args.city in ['AMS','SZH']:
         args.batch_size=8
-        ev_model.update_chunksize(64)
+        ev_model.update_chunksize(256)
     ev_dataset.create_loaders(
         seq_l=args.seq_l,
         pre_len=args.pre_len,
