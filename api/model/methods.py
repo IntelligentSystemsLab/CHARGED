@@ -221,8 +221,8 @@ class SegRNN(nn.Module):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
-        B, node, seq_len, channel = x.shape
-        x_enc = x.view(B * node, seq_len, channel)
+        B_ori, node, seq_len, channel = x.shape
+        x_enc = x.view(B_ori * node, seq_len, channel)
         outputs = []
         current_chunk_size = chunk_size
         start_idx = 0
@@ -240,7 +240,7 @@ class SegRNN(nn.Module):
                 else:
                     raise e
         out = torch.cat(outputs, dim=0)
-        out = out.view(B, node)
+        out = out.view(B_ori, node)
         return out
 
 class FreTS(nn.Module):
@@ -355,19 +355,20 @@ class FreTS(nn.Module):
                 else:
                     raise e
         out = torch.cat(outputs, dim=0)
-        out = out.view(B, node)
+        out = out.view(B_ori, node)
         return out
 
 
 
 class ModernTCN(nn.Module):
-    def __init__(self,n_fea, patch_size=16,patch_stride=8, downsample_ratio=2, ffn_ratio=2, num_blocks=[1,1,1,1],
+    def __init__(self,n_fea, seq_len, pred_len,patch_size=16,patch_stride=8, downsample_ratio=2, ffn_ratio=2, num_blocks=[1,1,1,1],
                  large_size=[31,29,27,13], small_size=[5,5,5,5], dims=[256,256,256,256], dw_dims=[256,256,256,256],
                  small_kernel_merged=False, backbone_dropout=0.1, head_dropout=0.1, use_multi_scale=True, revin=True, affine=True,
-                 subtract_last=False, seq_len=512, individual=False, target_window=96):
+                 subtract_last=False, individual=False, ):
 
         super(ModernTCN, self).__init__()
         c_in=n_fea
+        target_window = pred_len
         # RevIN
         self.revin = revin
         if self.revin: self.revin_layer = ModernTCN_RevIN(c_in, affine=affine, subtract_last=subtract_last)
@@ -387,7 +388,7 @@ class ModernTCN(nn.Module):
                     nn.BatchNorm1d(dims[i]),
                     nn.Conv1d(dims[i], dims[i + 1], kernel_size=downsample_ratio, stride=downsample_ratio),
                 )
-            self.downsample_layers.append(downsample_layer)
+                self.downsample_layers.append(downsample_layer)
 
         self.patch_size = patch_size
         self.patch_stride = patch_stride
@@ -422,8 +423,10 @@ class ModernTCN(nn.Module):
             self.head = ModernTCN_Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window,
                                      head_dropout=head_dropout)
 
+        self.final_linear = nn.Linear(n_fea, 1)
 
-    def forward_feature(self, x, te=None):
+
+    def forward_feature(self, x):
 
         B,M,L=x.shape
         x = x.unsqueeze(-2)
@@ -446,23 +449,40 @@ class ModernTCN(nn.Module):
             x = self.stages[i](x)
         return x
 
-    def forward(self, x, te=None):
-
-        # instance norm
-        if self.revin:
-            x = x.permute(0, 2, 1)
-            x = self.revin_layer(x, 'norm')
-            x = x.permute(0, 2, 1)
-        x = self.forward_feature(
-            x,te)
-        x = self.head(
-            x)
-        # de-instance norm
-        if self.revin:
-            x = x.permute(0, 2, 1)
-            x = self.revin_layer(x, 'denorm')
-            x = x.permute(0, 2, 1)
-        return x
+    def forward(self, feat, extra_feat=None, chunk_size=1024):
+        x = feat.unsqueeze(-1)
+        if extra_feat is not None:
+            x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
+        B_ori, node, seq_len, channel = x.shape
+        x_enc = x.view(B_ori * node, seq_len, channel)
+        outputs = []
+        current_chunk_size = chunk_size
+        start_idx = 0
+        while start_idx < x_enc.shape[0]:
+            try:
+                x_chunk = x_enc[start_idx: start_idx + current_chunk_size]
+                if self.revin:
+                    x_chunk = self.revin_layer(x_chunk, 'norm')
+                    x_chunk = x_chunk.permute(0, 2, 1)
+                x_chunk = self.forward_feature(x_chunk)
+                x_chunk = self.head(x_chunk)
+                # de-instance norm
+                if self.revin:
+                    x_chunk = x_chunk.permute(0, 2, 1)
+                    x_chunk = self.revin_layer(x_chunk, 'denorm')
+                x_chunk = self.final_linear(x_chunk)
+                x_chunk = x_chunk.squeeze(-1)
+                outputs.append(x_chunk)
+                start_idx += current_chunk_size
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    current_chunk_size = max(1, current_chunk_size // 1.5)
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
+        out = torch.cat(outputs, dim=0)
+        out = out.view(B_ori, node)
+        return out
 
     def structural_reparam(self):
         for m in self.modules():

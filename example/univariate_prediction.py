@@ -61,6 +61,8 @@ if __name__ == '__main__':
         pre_len=args.pre_len,
         device=device,
     )
+    if args.model not in ['lo','ar','arima']:
+        ev_model.model=ev_model.model.to(device)
 
     ev_dataset.split_cross_validation(
         fold=args.fold,
