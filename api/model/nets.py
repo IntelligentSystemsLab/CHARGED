@@ -5,15 +5,12 @@
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/11 2:14
 
-import os
 import torch
 import torch.nn as nn
 import numpy as np
-import pandas as pd
 from joblib import Parallel, delayed
 from pmdarima import auto_arima
 from statsmodels.tsa.ar_model import AutoReg
-from statsmodels.tsa.arima.model import ARIMA
 import torch.nn.functional as F
 import warnings
 
@@ -179,6 +176,7 @@ class SegRNN(nn.Module):
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.seg_len)
         )
+        self.final_linear = nn.Linear(self.enc_in, 1)
 
     def encoder(self, x):
         # b:batch_size c:channel_size s:seq_len
@@ -210,6 +208,7 @@ class SegRNN(nn.Module):
 
         # permute and denorm
         y = y.permute(0, 2, 1) + seq_last
+        y = self.final_linear(y)
         return y
 
     def forecast(self, x_enc):

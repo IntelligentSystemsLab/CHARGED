@@ -32,6 +32,7 @@ class EVDataset(object):
         self.e_price = pd.read_csv(f'{self.data_path}e_price.csv', index_col=0, header=0).values
         self.s_price = pd.read_csv(f'{self.data_path}s_price.csv', index_col=0, header=0).values
 
+
         self.time = pd.to_datetime(self.feat.index)
 
         price_scaler = MinMaxScaler(feature_range=(0, 1))
@@ -41,7 +42,15 @@ class EVDataset(object):
         self.weather = pd.read_csv(f'{self.data_path}weather.csv', header=0, index_col='time')
         self.weather = self.weather[['temp', 'precip', 'visibility']]
 
-        self.extra_feat = None
+        stations_info = pd.read_csv(f'{self.data_path}stations.csv', header=0)
+        stations_info = stations_info.set_index("station_id")
+        stations_info.index = stations_info.index.astype(str)
+        lat_long = stations_info.loc[self.feat.columns, ['latitude', 'longitude']].values
+        lat_norm = (lat_long[:, 0] +90) / 180
+        lon_norm = (lat_long[:, 1] +180) / 360
+        self.lat_long_norm = np.stack([lat_norm, lon_norm], axis=1)
+        self.extra_feat = np.tile(self.lat_long_norm[np.newaxis, :, :], (self.feat.shape[0], 1, 1))
+
         if self.auxiliary != 'None':
             self.extra_feat = np.zeros([self.feat.shape[0], self.feat.shape[1], 1])
             if self.auxiliary == 'all':

@@ -24,16 +24,11 @@ def random_seed(seed):
     torch.backends.cudnn.enabled = False
 
 
-def get_n_feature(auxiliary):
-    n_fea = 1
-    if auxiliary == 'all':
-        n_fea = 5
-    elif auxiliary == 'None':
-        n_fea = 1
+def get_n_feature(extra_feat):
+    if extra_feat is None:
+        return 1
     else:
-        for _ in auxiliary.split('+'):
-            n_fea += 1
-    return n_fea
+        return extra_feat.shape[-1]+1
 
 
 class CreateDataset(Dataset):

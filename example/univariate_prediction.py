@@ -52,7 +52,7 @@ if __name__ == '__main__':
     print(
         f"Running {args.model} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
     num_node = ev_dataset.feat.shape[1] if args.pred_type == 'region' else 1
-    n_fea = get_n_feature(args.auxiliary)
+    n_fea = get_n_feature(ev_dataset.extra_feat)
     ev_model = PredictionModel(
         num_node=num_node,
         n_fea=n_fea,
