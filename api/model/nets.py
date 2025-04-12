@@ -14,6 +14,7 @@ from joblib import Parallel, delayed
 from pmdarima import auto_arima
 from statsmodels.tsa.ar_model import AutoReg
 from statsmodels.tsa.arima.model import ARIMA
+import torch.nn.functional as F
 import warnings
 
 
@@ -150,7 +151,7 @@ class Lstm(nn.Module):
 
 class SegRNN(nn.Module):
 
-    def __init__(self, seq_len,pred_len,node,n_fea,seg_len=1,d_model=256,dropout=0.1):
+    def __init__(self, seq_len,pred_len,n_fea,seg_len=1,d_model=256,dropout=0.1):
         super(SegRNN, self).__init__()
 
         # get parameters
@@ -159,7 +160,6 @@ class SegRNN(nn.Module):
         self.d_model = d_model
         self.dropout = dropout
         self.pred_len = pred_len
-        self.nodes = node
 
         self.seg_len = seg_len
         self.seg_num_x = self.seq_len // self.seg_len
@@ -216,13 +216,121 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None):
+    def forward(self,feat, extra_feat=None, chunk_size=256):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
         B, node, seq_len, channel = x.shape
         x_enc = x.view(B * node, seq_len, channel)
-        dec_out = self.forecast(x_enc)
-        features = dec_out[:, -1, :]
-        out = features.view(B, node)
+        outputs = []
+        for i in range(0, x_enc.shape[0], chunk_size):
+            x_chunk = x_enc[i: i + chunk_size]
+            dec_out_chunk = self.forecast(x_chunk)
+            features_chunk = dec_out_chunk[:, -1, :]
+            outputs.append(features_chunk)
+        out = torch.cat(outputs, dim=0)
+        out = out.view(B, node)
         return out
+
+class FreTS(nn.Module):
+    def __init__(self, seq_len,pred_len,n_fea,embed_size = 128,hidden_size = 256,sparsity_threshold = 0.01,scale = 0.02):
+        super(FreTS, self).__init__()
+        self.embed_size = embed_size
+        self.hidden_size = hidden_size
+        self.pre_length = pred_len
+        self.feature_size = n_fea
+        self.seq_length = seq_len
+        self.sparsity_threshold = sparsity_threshold
+        self.scale = scale
+        self.embeddings = nn.Parameter(torch.randn(1, self.embed_size))
+        self.r1 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.i1 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.rb1 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.ib1 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.r2 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.i2 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.rb2 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.ib2 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+
+        self.fc = nn.Sequential(
+            nn.Linear(self.seq_length * self.embed_size, self.hidden_size),
+            nn.LeakyReLU(),
+            nn.Linear(self.hidden_size, self.pre_length)
+        )
+
+    # dimension extension
+    def tokenEmb(self, x):
+        # x: [Batch, Input length, Channel]
+        x = x.permute(0, 2, 1)
+        x = x.unsqueeze(3)
+        # N*T*1 x 1*D = N*T*D
+        y = self.embeddings
+        return x * y
+
+    # frequency temporal learner
+    def MLP_temporal(self, x, B, N, L):
+        # [B, N, T, D]
+        x = torch.fft.rfft(x, dim=2, norm='ortho')  # FFT on L dimension
+        y = self.FreMLP(B, N, L, x, self.r2, self.i2, self.rb2, self.ib2)
+        x = torch.fft.irfft(y, n=self.seq_length, dim=2, norm="ortho")
+        return x
+
+    # frequency channel learner
+    def MLP_channel(self, x, B, N, L):
+        # [B, N, T, D]
+        x = x.permute(0, 2, 1, 3)
+        # [B, T, N, D]
+        x = torch.fft.rfft(x, dim=2, norm='ortho')  # FFT on N dimension
+        y = self.FreMLP(B, L, N, x, self.r1, self.i1, self.rb1, self.ib1)
+        x = torch.fft.irfft(y, n=self.feature_size, dim=2, norm="ortho")
+        x = x.permute(0, 2, 1, 3)
+        # [B, N, T, D]
+        return x
+
+    # frequency-domain MLPs
+    # dimension: FFT along the dimension, r: the real part of weights, i: the imaginary part of weights
+    # rb: the real part of bias, ib: the imaginary part of bias
+    def FreMLP(self, B, nd, dimension, x, r, i, rb, ib):
+        o1_real = torch.zeros([B, nd, dimension // 2 + 1, self.embed_size],
+                              device=x.device)
+        o1_imag = torch.zeros([B, nd, dimension // 2 + 1, self.embed_size],
+                              device=x.device)
+
+        o1_real = F.relu(
+            torch.einsum('bijd,dd->bijd', x.real, r) - \
+            torch.einsum('bijd,dd->bijd', x.imag, i) + \
+            rb
+        )
+
+        o1_imag = F.relu(
+            torch.einsum('bijd,dd->bijd', x.imag, r) + \
+            torch.einsum('bijd,dd->bijd', x.real, i) + \
+            ib
+        )
+
+        y = torch.stack([o1_real, o1_imag], dim=-1)
+        y = F.softshrink(y, lambd=self.sparsity_threshold)
+        y = torch.view_as_complex(y)
+        return y
+
+    def forward(self, feat, extra_feat=None):
+        x = feat.unsqueeze(-1)
+        if extra_feat is not None:
+            x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
+        B_ori, node, seq_len, channel = x.shape
+        x_enc = x.view(B_ori * node, seq_len, channel)
+
+        # x: [Batch, Input length, Channel]
+        B, T, N = x_enc.shape
+        # embedding x: [B, N, T, D]
+        x = self.tokenEmb(x)
+        bias = x
+        # [B, N, T, D]
+        # if self.channel_independence == '1':
+        #     x = self.MLP_channel(x, B, N, T)
+        x = self.MLP_channel(x, B, N, T)
+        # [B, N, T, D]
+        x = self.MLP_temporal(x, B, N, T)
+        x = x + bias
+        x = self.fc(x.reshape(B, N, -1)).permute(0, 2, 1)
+        return x
