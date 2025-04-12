@@ -77,9 +77,6 @@ if __name__ == '__main__':
 
     print(
         f"Split outcome - Training set: {len(ev_dataset.train_feat)}, Validation set: {len(ev_dataset.valid_feat)}, Test set: {len(ev_dataset.test_feat)}")
-    if args.city in ['AMS','SZH']:
-        args.batch_size=8
-        ev_model.update_chunksize(256)
     ev_dataset.create_loaders(
         seq_l=args.seq_l,
         pre_len=args.pre_len,
