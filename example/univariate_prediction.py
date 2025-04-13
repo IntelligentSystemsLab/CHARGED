@@ -8,7 +8,6 @@
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-import logging
 import os
 import sys
 import torch
@@ -20,8 +19,8 @@ if parent_dir not in sys.path:
 from api.config.parse import parse_args
 from api.dataset.config import EVDataset
 from api.model.config import PredictionModel
-from api.trainer.config import PredictionTrainer
-from api.utils import random_seed, get_n_feature
+from api.trainer.common import PredictionTrainer
+from api.utils import random_seed, get_n_feature,Logger
 
 if __name__ == '__main__':
     TRAIN_RATIO, VAL_RATIO, TEST_RATIO = 0.8, 0.1, 0.1
@@ -33,12 +32,8 @@ if __name__ == '__main__':
         counter += 1
         new_path = f"{base_path}#{counter}/"
     os.makedirs(new_path)
-    logging.basicConfig(
-        format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s',
-        level=logging.DEBUG,
-        filename=os.path.join(new_path, 'logging.txt'),
-        filemode='a'
-    )
+    sys.stdout=Logger(os.path.join(new_path, 'logging.txt'))
+
 
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
     random_seed(seed=args.seed)
@@ -47,8 +42,6 @@ if __name__ == '__main__':
         auxiliary=args.auxiliary,
         data_path=f'{args.data_path}{args.city}_remove_zero/',
     )
-    logging.info(
-        f"Running {args.model} on {args.city} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
     print(
         f"Running {args.model} on {args.city} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
     num_node = ev_dataset.feat.shape[1] if args.pred_type == 'region' else 1
@@ -71,9 +64,6 @@ if __name__ == '__main__':
         valid_ratio=VAL_RATIO,
         pred_type=args.pred_type,
     )
-
-    logging.info(
-        f"Split outcome - Training set: {len(ev_dataset.train_feat)}, Validation set: {len(ev_dataset.valid_feat)}, Test set: {len(ev_dataset.test_feat)}")
 
     print(
         f"Split outcome - Training set: {len(ev_dataset.train_feat)}, Validation set: {len(ev_dataset.valid_feat)}, Test set: {len(ev_dataset.test_feat)}")
