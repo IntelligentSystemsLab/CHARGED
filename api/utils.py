@@ -4,15 +4,30 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/10 16:20
-
-
+import datetime
 import random
+import sys
+
 import torch
 import numpy as np
 from torch.utils.data import Dataset
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, median_absolute_error, \
     explained_variance_score, mean_absolute_percentage_error
 
+class Logger(object):
+    def __init__(self, filename="log.txt"):
+        self.terminal = sys.stdout
+        self.log = open(filename, "w", encoding="utf-8")
+    def write(self, message):
+        # 如果 message 为空行则直接写入（避免重复添加时间戳）
+        if message.strip():
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            message = f"{timestamp} - {message}"
+        self.terminal.write(message)
+        self.log.write(message)
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 def random_seed(seed):
     torch.manual_seed(seed)
