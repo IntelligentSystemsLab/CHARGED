@@ -111,7 +111,7 @@ class EVDataset(object):
 
         self.scaler = None
 
-        if pred_type == 'region':
+        if pred_type == 'station':
             self.scaler = StandardScaler()
             self.train_feat = self.scaler.fit_transform(train_feat)
             self.valid_feat = self.scaler.transform(valid_feat)

@@ -110,7 +110,7 @@ class Fcnn(nn.Module):
         self.linear = nn.Linear(seq * n_fea, 1)
 
     def forward(self, feat, extra_feat=None):
-        x = feat  # batch, nodes,seq for region or batch, seq for nodes
+        x = feat
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
             assert x.shape[
