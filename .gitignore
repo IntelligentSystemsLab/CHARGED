@@ -7,3 +7,4 @@
 data/AMS/distance.csv
 data/AMS/duration.csv
 /example/result
+api/trash.py
