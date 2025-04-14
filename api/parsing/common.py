@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--auxiliary', type=str, default='None', help="Which auxiliary variable to use for prediction.")
     parser.add_argument('--data_path', type=str, default='../data/', help="Path to data.")
     parser.add_argument('--output_path', type=str, default='./result/univariate/', help="Path to save results.")
-    parser.add_argument('--model', type=str, default='multipatchformer', help="The used model.")
+    parser.add_argument('--model', type=str, default='convtimenet', help="The used model.")
     parser.add_argument('--seq_l', type=int, default=12, help="The sequence length of input data.")
     parser.add_argument('--pre_len', type=int, default=1, help="The length of prediction interval.")
     parser.add_argument('--fold', type=int, default=1, help="The current fold number for training data.")

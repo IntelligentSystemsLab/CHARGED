@@ -17,7 +17,6 @@ class PredictionModel(object):
         model_name,
         seq_l,
         pre_len,
-        device,
     ):
         self.model_name=model_name
         if model_name == 'lstm':

@@ -20,6 +20,7 @@ class EVDataset(object):
             auxiliary,
             data_path,
             max_stations=300,
+            weather_columns=['temp', 'precip', 'visibility'],
     ):
         super(EVDataset, self).__init__()
         self.feature = feature
@@ -29,6 +30,8 @@ class EVDataset(object):
             self.feat = pd.read_csv(f'{self.data_path}volume.csv', header=0, index_col=0)
         elif self.feature == 'duration':
             self.feat = pd.read_csv(f'{self.data_path}duration.csv', header=0, index_col=0)
+        else:
+            raise ValueError("Unknown feature")
 
         self.e_price = pd.read_csv(f'{self.data_path}e_price.csv', index_col=0, header=0).values
         self.s_price = pd.read_csv(f'{self.data_path}s_price.csv', index_col=0, header=0).values
@@ -41,14 +44,20 @@ class EVDataset(object):
         self.s_price = price_scaler.fit_transform(self.s_price)
 
         self.weather = pd.read_csv(f'{self.data_path}weather.csv', header=0, index_col='time')
-        self.weather = self.weather[['temp', 'precip', 'visibility']]
+        self.weather = self.weather[weather_columns]
+        if 'temp' in self.weather.columns:
+            self.weather['temp'] = (self.weather['temp'] + 5) / 45
+        if 'precip' in self.weather.columns:
+            self.weather['precip'] = self.weather['precip'] / 120
+        if 'visibility' in self.weather.columns:
+            self.weather['visibility'] = self.weather['visibility'] / 50
 
         stations_info = pd.read_csv(f'{self.data_path}stations.csv', header=0)
         stations_info = stations_info.set_index("station_id")
         stations_info.index = stations_info.index.astype(str)
 
         if len(stations_info) > max_stations:
-            top_stations = stations_info.sort_values(by='avg_power', ascending=False).head(max_stations)
+            top_stations = stations_info.sort_values(by='total_duration', ascending=False).head(max_stations)
             top_station_ids = top_stations.index.tolist()
             self.feat = self.feat[top_station_ids]
             e_price_df = pd.read_csv(f'{self.data_path}e_price.csv', index_col=0, header=0)
@@ -88,13 +97,14 @@ class EVDataset(object):
 
         self.feat = np.array(self.feat)
 
+
+
     def split_cross_validation(
             self,
             fold,
             total_fold,
             train_ratio,
             valid_ratio,
-            pred_type,
     ):
         assert len(self.time) == len(self.feat)
         month_list = sorted(np.unique(self.time.month))
@@ -111,17 +121,10 @@ class EVDataset(object):
 
         self.scaler = None
 
-        if pred_type == 'station':
-            self.scaler = StandardScaler()
-            self.train_feat = self.scaler.fit_transform(train_feat)
-            self.valid_feat = self.scaler.transform(valid_feat)
-            self.test_feat = self.scaler.transform(test_feat)
-        else:
-            node_idx = int(pred_type)
-            self.scaler = StandardScaler()
-            self.train_feat = self.scaler.fit_transform(train_feat[:, node_idx].reshape(-1, 1))
-            self.valid_feat = self.scaler.transform(valid_feat[:, node_idx].reshape(-1, 1))
-            self.test_feat = self.scaler.transform(test_feat[:, node_idx].reshape(-1, 1))
+        self.scaler = StandardScaler()
+        self.train_feat = self.scaler.fit_transform(train_feat)
+        self.valid_feat = self.scaler.transform(valid_feat)
+        self.test_feat = self.scaler.transform(test_feat)
 
         self.train_extra_feat, self.valid_extra_feat, self.test_extra_feat = None, None, None
         if self.extra_feat is not None:

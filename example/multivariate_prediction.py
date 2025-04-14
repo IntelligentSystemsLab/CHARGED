@@ -16,8 +16,8 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from api.config.common import parse_args
-from api.dataset.config import EVDataset
+from api.parsing.common import parse_args
+from api.dataset.common import EVDataset
 from api.model.config import PredictionModel
 from api.trainer.common import PredictionTrainer
 from api.utils import random_seed, get_n_feature,Logger
@@ -52,7 +52,6 @@ if __name__ == '__main__':
         model_name=args.model,
         seq_l=args.seq_l,
         pre_len=args.pre_len,
-        device=device,
     )
     if args.model not in ['lo','ar','arima']:
         ev_model.model=ev_model.model.to(device)

@@ -122,3 +122,10 @@ def convert_numpy(obj):
         return [convert_numpy(item) for item in obj]
     else:
         return obj
+
+def get_data_paths(ori_path,cities,suffix='_remove_zero'):
+    city_list = cities.split('+')
+    data_paths={}
+    for city in city_list:
+        data_paths[city]=f'{ori_path}{city}{suffix}/'
+    return data_paths

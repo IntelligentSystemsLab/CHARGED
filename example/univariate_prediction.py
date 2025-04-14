@@ -16,8 +16,8 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from api.config.common import parse_args
-from api.dataset.config import EVDataset
+from api.parsing.common import parse_args
+from api.dataset.common import EVDataset
 from api.model.config import PredictionModel
 from api.trainer.common import PredictionTrainer
 from api.utils import random_seed, get_n_feature,Logger
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     )
     print(
         f"Running {args.model} on {args.city} with feature={args.feature}, pre_l={args.pre_len}, fold={args.fold}, auxiliary={args.auxiliary}, pred_type(node)={args.pred_type}")
-    num_node = ev_dataset.feat.shape[1] if args.pred_type == 'station' else 1
+    num_node = ev_dataset.feat.shape[1]
     n_fea = get_n_feature(ev_dataset.extra_feat)
     ev_model = PredictionModel(
         num_node=num_node,
@@ -52,7 +52,6 @@ if __name__ == '__main__':
         model_name=args.model,
         seq_l=args.seq_l,
         pre_len=args.pre_len,
-        device=device,
     )
     if args.model not in ['lo','ar','arima']:
         ev_model.model=ev_model.model.to(device)
@@ -62,7 +61,6 @@ if __name__ == '__main__':
         total_fold=args.total_fold,
         train_ratio=TRAIN_RATIO,
         valid_ratio=VAL_RATIO,
-        pred_type=args.pred_type,
     )
 
     print(
