@@ -6,7 +6,7 @@
 # @Last Modified Time : 2025/4/11 2:03
 import torch
 
-from api.model.methods import Lstm, Lo, Ar, Arima, Fcnn, SegRNN, FreTS, ModernTCN, MultiPatchFormer
+from api.model.modules import Lstm, Lo, Ar, Arima, Fcnn, SegRNN, FreTS, ModernTCN, MultiPatchFormer,ConvTimeNet
 
 
 class PredictionModel(object):
@@ -38,6 +38,8 @@ class PredictionModel(object):
             self.model = ModernTCN(seq_len=seq_l,n_fea=n_fea,pred_len=pre_len)
         elif model_name == 'multipatchformer':
             self.model = MultiPatchFormer(seq_len=seq_l,n_fea=n_fea,pred_len=pre_len)
+        elif model_name == 'convtimenet':
+            self.model = ConvTimeNet(seq_len=seq_l,c_in=n_fea,c_out=pre_len)
         self.model.chunk_size=512
 
     def load_model(self,model_path):
