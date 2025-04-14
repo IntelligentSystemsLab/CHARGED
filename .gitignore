@@ -1,6 +1,6 @@
 /.idea
 /api/__pycache__
-/api/config/__pycache__
+/api/parsing/__pycache__
 /api/dataset/__pycache__
 /api/model/__pycache__
 /api/trainer/__pycache__
