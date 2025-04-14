@@ -4,6 +4,8 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/12 15:41
+import copy
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -468,3 +470,116 @@ class MultiPatchFormer_Encoder(nn.Module):
         x = self.layerNormal_2(x + residual)
 
         return x, score
+
+
+class ConvTimeNet_ConvEncoder(nn.Module):
+    def __init__(self, d_model, d_ff, kernel_size=[19, 19, 29, 29, 37, 37], dropout=0.1, activation='gelu',
+                 n_layers=3, enable_res_param=False, norm='batch', re_param=False, device='cuda:0'):
+        super(ConvTimeNet_ConvEncoder, self).__init__()
+        self.layers = nn.ModuleList([ConvTimeNet_ConvEncoderLayer(kernel_size[i], d_model, d_ff=d_ff, dropout=dropout,
+                                                       activation=activation, enable_res_param=enable_res_param,
+                                                       norm=norm,
+                                                       re_param=re_param, device=device) \
+                                     for i in range(n_layers)])
+
+    def forward(self, src):
+        output = src
+        for mod in self.layers: output = mod(output)
+        return output
+
+
+class ConvTimeNet_ConvEncoderLayer(nn.Module):
+    def __init__(self, kernel_size, d_model, d_ff=256, dropout=0.1, activation="relu",
+                 enable_res_param=True, norm='batch', small_ks=3, re_param=True, device='cuda:0'):
+        super(ConvTimeNet_ConvEncoderLayer, self).__init__()
+
+        self.norm_tp = norm
+        self.re_param = re_param
+
+        # DeepWise Conv. Add & Norm
+        if self.re_param:
+            self.large_ks = kernel_size
+            self.small_ks = small_ks
+            self.DW_conv_large = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2, groups=d_model)
+            self.DW_conv_small = nn.Conv1d(d_model, d_model, self.small_ks, stride=1, padding=self.small_ks // 2, groups=d_model)
+            self.DW_infer = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2, groups=d_model)
+        else:
+            self.DW_conv = nn.Conv1d(d_model, d_model, kernel_size, stride=1, padding=kernel_size // 2, groups=d_model)
+
+        self.dw_act = ConvTimeNet_get_activation_fn(activation)
+
+        self.sublayerconnect1 = ConvTimeNet_SublayerConnection(enable_res_param, dropout)
+        self.dw_norm = nn.BatchNorm1d(d_model) if norm == 'batch' else nn.LayerNorm(d_model)
+
+        # Position-wise Feed-Forward
+        self.ff = nn.Sequential(nn.Conv1d(d_model, d_ff, 1, 1),
+                                ConvTimeNet_get_activation_fn(activation),
+                                nn.Dropout(dropout),
+                                nn.Conv1d(d_ff, d_model, 1, 1))
+
+        # Add & Norm
+        self.sublayerconnect2 = ConvTimeNet_SublayerConnection(enable_res_param, dropout)
+        self.norm_ffn = nn.BatchNorm1d(d_model) if norm == 'batch' else nn.LayerNorm(d_model)
+
+    def _get_merge_param(self):
+        left_pad = (self.large_ks - self.small_ks) // 2
+        right_pad = (self.large_ks - self.small_ks) - left_pad
+        module_output = copy.deepcopy(self.DW_conv_large)
+        module_output.weight += F.pad(self.DW_conv_small.weight, (left_pad, right_pad), value=0)
+        module_output.bias += self.DW_conv_small.bias
+        self.DW_infer = module_output
+
+    def forward(self, src):  # [B, C, L]
+
+        ## Deep-wise Conv Layer
+        if not self.re_param:
+            src = self.DW_conv(src)
+        else:
+            if self.training:  # training phase
+                large_out, small_out = self.DW_conv_large(src), self.DW_conv_small(src)
+                src = self.sublayerconnect1(src, self.dw_act(large_out + small_out))
+            else:  # testing phase
+                self._get_merge_param()
+                merge_out = self.DW_infer(src)
+                src = self.sublayerconnect1(src, self.dw_act(merge_out))
+
+        src = src.permute(0, 2, 1) if self.norm_tp != 'batch' else src
+        src = self.dw_norm(src)
+        src = src.permute(0, 2, 1) if self.norm_tp != 'batch' else src
+
+        ## Position-wise Conv Feed-Forward
+        src2 = self.ff(src)
+        ## Add & Norm
+
+        src2 = self.sublayerconnect2(src, src2)  # Add: residual connection with residual dropout
+
+        # Norm: batchnorm or layernorm
+        src2 = src2.permute(0, 2, 1) if self.norm_tp != 'batch' else src2
+        src2 = self.norm_ffn(src2)
+        src2 = src2.permute(0, 2, 1) if self.norm_tp != 'batch' else src2
+
+        return src
+
+def ConvTimeNet_get_activation_fn(activation):
+    if activation == "relu": return nn.ReLU()
+    elif activation == "gelu": return nn.GELU()
+    else: return activation()
+
+
+
+class ConvTimeNet_SublayerConnection(nn.Module):
+
+    def __init__(self, enable_res_parameter, dropout=0.1):
+        super(ConvTimeNet_SublayerConnection, self).__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.enable = enable_res_parameter
+        if enable_res_parameter:
+            self.a = nn.Parameter(torch.tensor(0.5))
+
+    def forward(self, x, out_x):
+        if not self.enable:
+            return x + self.dropout(out_x)
+        else:
+            # print(self.a)
+            # print(torch.mean(torch.abs(x) / torch.abs(out_x)))
+            return x + self.dropout(self.a * out_x)
