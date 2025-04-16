@@ -8,3 +8,4 @@ data/AMS/distance.csv
 data/AMS/duration.csv
 /example/result
 api/trash.py
+/api/federated/__pycache__
