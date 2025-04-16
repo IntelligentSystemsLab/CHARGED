@@ -99,7 +99,10 @@ def calculate_regression_metrics(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     mape = mean_absolute_percentage_error(MAPE_y_true, MAPE_y_pred)
-    rae = np.sum(np.abs(y_true - y_pred)) / np.sum(np.abs(y_true - np.mean(y_true)))
+    if np.sum(np.abs(y_true - np.mean(y_true)))==0:
+        rae = np.sum(np.abs(y_true - y_pred)) / eps
+    else:
+        rae = np.sum(np.abs(y_true - y_pred)) / np.sum(np.abs(y_true - np.mean(y_true)))
     medae = median_absolute_error(y_true, y_pred)
     r2 = r2_score(y_true, y_pred)
     evs = explained_variance_score(y_true, y_pred)
