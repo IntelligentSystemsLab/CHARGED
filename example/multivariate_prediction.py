@@ -61,7 +61,6 @@ if __name__ == '__main__':
         total_fold=args.total_fold,
         train_ratio=TRAIN_RATIO,
         valid_ratio=VAL_RATIO,
-        pred_type=args.pred_type,
     )
 
     print(
