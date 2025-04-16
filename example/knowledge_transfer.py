@@ -62,7 +62,7 @@ if __name__ == '__main__':
     eval_clients_id = []
     for client_id, data_dict in ev_dataset.training_clients_data.items():
         client_path = f'{new_path}{client_id}/'
-        os.makedirs(client_path)
+        # os.makedirs(client_path)
         train_clients.append(
             CommonClient(
                 client_id=client_id,
