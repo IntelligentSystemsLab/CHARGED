@@ -9,3 +9,4 @@ data/AMS/duration.csv
 /example/result
 api/trash.py
 /api/federated/__pycache__
+/api/config/__pycache__
