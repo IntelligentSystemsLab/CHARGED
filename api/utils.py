@@ -89,23 +89,29 @@ def create_rnn_data(dataset, lookback, predict_time):
         y.append(dataset[i + lookback + predict_time - 1])
     return np.array(x), np.array(y)
 
-def calculate_regression_metrics(y_true, y_pred):
-    eps = 2e-2
-    MAPE_y_true = y_true.copy()
-    MAPE_y_pred = y_pred.copy()
-    MAPE_y_true[np.where(MAPE_y_true <= eps)] = np.abs(MAPE_y_true[np.where(MAPE_y_true <= eps)]) + eps
-    MAPE_y_pred[np.where(MAPE_y_true <= eps)] = np.abs(MAPE_y_pred[np.where(MAPE_y_true <= eps)]) + eps
+def calculate_regression_metrics(y_true, y_pred,optimized=True):
+    eps = 1e-6
+    if optimized:
+        MAPE_y_true = y_true.copy()
+        MAPE_y_pred = y_pred.copy()
+        MAPE_y_true[np.where(MAPE_y_true <= eps)] = np.abs(MAPE_y_true[np.where(MAPE_y_true <= eps)]) + eps
+        MAPE_y_pred[np.where(MAPE_y_true <= eps)] = np.abs(MAPE_y_pred[np.where(MAPE_y_true <= eps)]) + eps
+        mape = mean_absolute_percentage_error(MAPE_y_true, MAPE_y_pred)
+        r2 = 1 - np.sum((y_true - y_pred) ** 2) / (np.sum((y_true - np.mean(y_true)) ** 2) + eps)
+        evs = 1 - np.var(y_true - y_pred) / (np.var(y_true) + eps)
+    else:
+        mape = mean_absolute_percentage_error(y_true, y_pred)
+        r2 = r2_score(y_true, y_pred)
+        evs = explained_variance_score(y_true, y_pred)
+
 
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    mape = mean_absolute_percentage_error(MAPE_y_true, MAPE_y_pred)
     if np.sum(np.abs(y_true - np.mean(y_true)))==0:
         rae = np.sum(np.abs(y_true - y_pred)) / eps
     else:
         rae = np.sum(np.abs(y_true - y_pred)) / np.sum(np.abs(y_true - np.mean(y_true)))
     medae = median_absolute_error(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
-    evs = explained_variance_score(y_true, y_pred)
     return {
         'MAE': mae,
         'RMSE': rmse,
