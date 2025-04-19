@@ -21,6 +21,7 @@ class EVDataset(object):
             data_path,
             max_stations=300,
             weather_columns=['temp', 'precip', 'visibility'],
+            selection_mode='middle',
     ):
         super(EVDataset, self).__init__()
         self.feature = feature
@@ -57,14 +58,23 @@ class EVDataset(object):
         stations_info.index = stations_info.index.astype(str)
 
         if len(stations_info) > max_stations:
-            top_stations = stations_info.sort_values(by='total_duration', ascending=False).head(max_stations)
-            top_station_ids = top_stations.index.tolist()
-            self.feat = self.feat[top_station_ids]
+            if selection_mode == 'top':
+                selected_stations = stations_info.sort_values(by='total_duration', ascending=False).head(
+                    max_stations)
+            elif selection_mode == 'middle':
+                sorted_stations = stations_info.sort_values(by='total_duration', ascending=True)
+                start = max((len(sorted_stations) - max_stations) // 2, 0)
+                selected_stations = sorted_stations.iloc[start:start + max_stations]
+            elif selection_mode == 'random':
+                selected_stations = stations_info.sample(n=max_stations, random_state=42)
+            else:
+                raise ValueError(f"Unknown selection_mode: {selection_mode}")
+            selected_ids=selected_stations.index.tolist()
+            self.feat = self.feat[selected_ids]
             e_price_df = pd.read_csv(f'{self.data_path}e_price.csv', index_col=0, header=0)
             s_price_df = pd.read_csv(f'{self.data_path}s_price.csv', index_col=0, header=0)
-            self.e_price = price_scaler.fit_transform(e_price_df[top_station_ids])
-            self.s_price = price_scaler.fit_transform(s_price_df[top_station_ids])
-            stations_info = top_stations
+            self.e_price = price_scaler.fit_transform(e_price_df[selected_ids])
+            self.s_price = price_scaler.fit_transform(s_price_df[selected_ids])
 
         lat_long = stations_info.loc[self.feat.columns, ['latitude', 'longitude']].values
         lat_norm = (lat_long[:, 0] +90) / 180
