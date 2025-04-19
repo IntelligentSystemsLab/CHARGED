@@ -25,6 +25,7 @@ class DistributedEVDataset(object):
             eval_city,
             max_stations=300,
             weather_columns=['temp', 'precip', 'visibility'],
+            selection_mode='middle',
     ):
         super(DistributedEVDataset, self).__init__()
         self.feature = feature
@@ -67,15 +68,25 @@ class DistributedEVDataset(object):
             stations_info.index = stations_info.index.astype(str)
 
             if pred_type=='station' and len(stations_info) > max_stations:
-                top_stations = stations_info.sort_values(by='total_duration', ascending=False).head(max_stations)
-                top_station_ids = top_stations.index.tolist()
-                feat_df = feat_df[top_station_ids]
+                if selection_mode == 'top':
+                    selected_stations = stations_info.sort_values(by='total_duration', ascending=False).head(
+                        max_stations)
+                elif selection_mode == 'middle':
+                    sorted_stations = stations_info.sort_values(by='total_duration', ascending=True)
+                    start = max((len(sorted_stations) - max_stations) // 2, 0)
+                    selected_stations = sorted_stations.iloc[start:start + max_stations]
+                elif selection_mode == 'random':
+                    selected_stations = stations_info.sample(n=max_stations, random_state=42)
+                else:
+                    raise ValueError(f"Unknown selection_mode: {selection_mode}")
+                selected_ids=selected_stations.index.tolist()
+                feat_df = feat_df[selected_ids]
                 e_price_df = pd.read_csv(f'{data_path}e_price.csv', index_col=0, header=0)
                 s_price_df = pd.read_csv(f'{data_path}s_price.csv', index_col=0, header=0)
-                e_price_all = price_scaler.fit_transform(e_price_df[top_station_ids])
-                s_price_all = price_scaler.fit_transform(s_price_df[top_station_ids])
-                stations_info = top_stations
-                station_ids = top_station_ids
+                e_price_all = price_scaler.fit_transform(e_price_df[selected_ids])
+                s_price_all = price_scaler.fit_transform(s_price_df[selected_ids])
+                stations_info = selected_stations
+                station_ids = selected_ids
 
             lat_long = stations_info.loc[feat_df.columns, ['latitude', 'longitude']].values
             lat_norm = (lat_long[:, 0] + 90) / 180
