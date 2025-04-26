@@ -6,6 +6,7 @@
 # @Last Modified Time : 2025/4/11 2:56
 import json
 import os
+from typing import Optional, Any
 
 import numpy as np
 import torch
@@ -13,118 +14,183 @@ from tqdm import tqdm
 
 from api.utils import calculate_regression_metrics, convert_numpy
 
+"""
+Module defining PredictionTrainer for training and evaluating prediction models.
+
+Classes:
+    PredictionTrainer: Manages training loops, validation, testing, and metric logging.
+"""
+
 
 class PredictionTrainer(object):
+    """
+    Trainer class for prediction models on EV charging demand data.
+
+    Handles both statistical (LO, AR, ARIMA) and neural models, providing
+    methods to train, validate, save best model, and evaluate with metrics.
+
+    Attributes:
+        ev_dataset (Any): Dataset object containing DataLoaders or raw arrays.
+        ev_model (Any): PredictionModel instance with `.model` and `.model_name`.
+        is_train (bool): Flag indicating training mode.
+        stat_model (bool): True if using statistical model (no optimizer).
+        optim (Optional[torch.optim.Optimizer]): Optimizer for neural models.
+        loss_func (Optional[torch.nn.Module]): Loss function for neural models.
+        save_path (str): Directory to save checkpoints and outputs.
+        test_loader (Any): Raw arrays or DataLoader for test data.
+        train_valid_feat (Optional[np.ndarray]): Combined data for statistical models.
+    """
+
     def __init__(
             self,
-            dataset,
-            model,
-            seq_l,
-            pre_len,
-            is_train,
-            save_path,
-    ):
+            dataset: Any,
+            model: Any,
+            seq_l: int,
+            pre_len: int,
+            is_train: bool,
+            save_path: str,
+    ) -> None:
+        """
+        Initialize PredictionTrainer.
+
+        Args:
+            dataset (Any): EVDataset or similar with train_loader, valid_loader, test_loader.
+            model (Any): PredictionModel containing `.model` and `.model_name`.
+            seq_l (int): Input sequence length for statistical models.
+            pre_len (int): Prediction horizon length for statistical models.
+            is_train (bool): Flag to enable training mode.
+            save_path (str): Directory path to save model and results.
+        """
         self.ev_dataset = dataset
         self.ev_model = model
         self.save_path = save_path
         self.is_train = is_train
-        if self.ev_model.model_name == 'lo' or self.ev_model.model_name == 'ar' or self.ev_model.model_name == 'arima':
+
+        # Configure based on model type
+        if model.model_name in ('lo', 'ar', 'arima'):
+            # Statistical models: no optimizer or loss
             self.optim = None
             self.loss_func = None
             self.is_train = False
             self.stat_model = True
+            # Prepare train+valid for prediction
             self.train_valid_feat = np.vstack(
-                (dataset.train_feat, dataset.valid_feat, dataset.test_feat[:seq_l + pre_len, :]))
-            self.test_loader = [self.train_valid_feat, dataset.test_feat[pre_len + seq_l:, :]]
+                (dataset.train_feat, dataset.valid_feat,
+                 dataset.test_feat[: seq_l + pre_len, :])
+            )
+            # Test features and labels for statistical prediction
+            self.test_loader = [
+                self.train_valid_feat,
+                dataset.test_feat[pre_len + seq_l:, :]
+            ]
         else:
-            self.optim = torch.optim.Adam(self.ev_model.model.parameters(), weight_decay=0.00001)
+            # Neural models: set optimizer and loss
+            self.optim = torch.optim.Adam(
+                model.model.parameters(), weight_decay=1e-5
+            )
             self.stat_model = False
             self.loss_func = torch.nn.MSELoss()
 
-    def training(
-            self,
-            epoch,
-    ):
+    def training(self, epoch: int) -> None:
+        """
+        Train and validate neural model over multiple epochs.
 
-        valid_loss = 1000
+        Saves the best model based on validation loss at 'train.pth'.
+
+        Args:
+            epoch (int): Number of training epochs to run.
+        """
+        best_val_loss = float('inf')
         self.ev_model.model.train()
+
         for _ in tqdm(range(epoch), desc='Training'):
-            for j, data in enumerate(self.ev_dataset.train_loader):
+            # Training loop
+            for feat, label, extra in self.ev_dataset.train_loader:
                 torch.cuda.empty_cache()
-                feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
-                    extra_feat=None
+                    extra = None
                 self.optim.zero_grad()
-                predict = self.ev_model.model(feat, extra_feat)
-                if predict.shape != label.shape:
-                    loss = self.loss_func(predict.unsqueeze(-1), label)
+                preds = self.ev_model.model(feat, extra)
+                # Align shapes for loss
+                if preds.shape != label.shape:
+                    loss = self.loss_func(preds.unsqueeze(-1), label)
                 else:
-                    loss = self.loss_func(predict, label)
+                    loss = self.loss_func(preds, label)
                 loss.backward()
                 self.optim.step()
 
-            # validation
-            for j, data in enumerate(self.ev_dataset.valid_loader):
+            # Validation loop
+            for feat, label, extra in self.ev_dataset.valid_loader:
                 torch.cuda.empty_cache()
-                feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
-                    extra_feat=None
-
-                predict = self.ev_model.model(feat, extra_feat)
-                if predict.shape != label.shape:
-                    loss = self.loss_func(predict.unsqueeze(-1), label)
+                    extra = None
+                preds = self.ev_model.model(feat, extra)
+                if preds.shape != label.shape:
+                    loss = self.loss_func(preds.unsqueeze(-1), label)
                 else:
-                    loss = self.loss_func(predict, label)
-                if loss.item() < valid_loss:
-                    valid_loss = loss.item()
-                    path = os.path.join(self.save_path,'train.pth')
-                    torch.save(self.ev_model.model.state_dict(), path)
+                    loss = self.loss_func(preds, label)
+                val_loss = loss.item()
+                # Save best model
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    os.makedirs(self.save_path, exist_ok=True)
+                    torch.save(
+                        self.ev_model.model.state_dict(),
+                        os.path.join(self.save_path, 'train.pth')
+                    )
 
-    def test(
-            self,
-            model_path=None,
-    ):
-        predict_list = []
-        label_list = []
+    def test(self, model_path: Optional[str] = None) -> None:
+        """
+        Evaluate model on test data and save predictions, labels, and metrics.
+
+        For neural models, loads saved checkpoint if provided.
+        For statistical models, runs .predict on raw arrays.
+
+        Args:
+            model_path (str, optional): Path to model weights for neural models.
+        """
+        preds_list, labels_list = [], []
 
         if not self.stat_model:
-            if model_path is not None:
-                self.ev_model.load_model(model_path=model_path)
+            # Neural model evaluation
+            if model_path:
+                self.ev_model.load_model(model_path)
             self.ev_model.model.eval()
-            for j, data in enumerate(self.ev_dataset.test_loader):
+
+            for feat, label, extra in self.ev_dataset.test_loader:
                 torch.cuda.empty_cache()
-                feat, label, extra_feat = data
                 if self.ev_dataset.extra_feat is None:
-                    extra_feat=None
-
+                    extra = None
                 with torch.no_grad():
-                    predict = self.ev_model.model(feat, extra_feat)
-                    if predict.shape != label.shape:
-                        predict = predict.unsqueeze(-1)
-                    predict = predict.cpu().detach().numpy()
-                label = label.cpu().detach().numpy()
-                predict_list.append(predict)
-                label_list.append(label)
-
+                    preds = self.ev_model.model(feat, extra)
+                    preds = preds.unsqueeze(-1) if preds.shape != label.shape else preds
+                    preds = preds.cpu().numpy()
+                labels = label.cpu().numpy()
+                preds_list.append(preds)
+                labels_list.append(labels)
         else:
-            train_valid_occ, test_occ = self.test_loader
-            predict = self.ev_model.model.predict(train_valid_occ, test_occ)
-            label = test_occ
-            predict_list.append(predict)
-            label_list.append(label)
+            # Statistical model prediction
+            train_valid, test_feats = self.test_loader
+            preds = self.ev_model.model.predict(train_valid, test_feats)
+            preds_list.append(preds)
+            labels_list.append(test_feats)
 
-        predict_array = np.concatenate(predict_list, axis=0)
-        label_array = np.concatenate(label_list, axis=0)
-
-
-        if self.ev_dataset.scaler is not None:
-            predict_array = self.ev_dataset.scaler.inverse_transform(predict_array)
+        # Concatenate and inverse-transform
+        pred_array = np.concatenate(preds_list, axis=0)
+        label_array = np.concatenate(labels_list, axis=0)
+        if self.ev_dataset.scaler:
+            pred_array = self.ev_dataset.scaler.inverse_transform(pred_array)
             label_array = self.ev_dataset.scaler.inverse_transform(label_array)
 
-        np.save(os.path.join(self.save_path,'predict.npy'),predict_array)
-        np.save(os.path.join(self.save_path,'label.npy'),label_array)
-        result_metrics=calculate_regression_metrics(y_true=label_array,y_pred=predict_array)
-        result_metrics_converted = convert_numpy(result_metrics)
-        with open(os.path.join(self.save_path,'metrics.json'), 'w', encoding='utf-8') as f:
-            json.dump(result_metrics_converted, f, ensure_ascii=False, indent=4)
+        # Save outputs
+        os.makedirs(self.save_path, exist_ok=True)
+        np.save(os.path.join(self.save_path, 'predict.npy'), pred_array)
+        np.save(os.path.join(self.save_path, 'label.npy'), label_array)
 
+        # Compute and dump metrics
+        metrics = calculate_regression_metrics(y_true=label_array, y_pred=pred_array)
+        metrics = convert_numpy(metrics)
+        with open(
+                os.path.join(self.save_path, 'metrics.json'), 'w', encoding='utf-8'
+        ) as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=4)
