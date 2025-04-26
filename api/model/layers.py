@@ -4,14 +4,43 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/12 15:41
+
 import copy
+import math
 
 import torch
 from torch import nn
 import torch.nn.functional as F
-import math
 import numpy as np
 from math import sqrt
+
+"""
+Module defining attention layers and modern TCN/transformer-inspired blocks
+for time-series forecasting models.
+
+Classes:
+    AttentionLayer: Multi-head attention wrapper with projections.
+    FullAttention: Standard scaled dot-product attention with optional mask.
+    TriangularCausalMask: Generates causal mask for autoregressive attention.
+    ModernTCN_moving_avg: Moving average block for trend extraction.
+    ModernTCN_series_decomp: Time-series decomposition into trend and residual.
+    ModernTCN_Flatten_Head: Forecasting head flattening TCN output.
+    ModernTCN_RevIN: Reversible Instance Normalization.
+    ModernTCN_LayerNorm: Layer normalization for TCN outputs.
+    ModernTCN_ReparamLargeKernelConv: Re-parameterizable large-kernel conv block.
+    ModernTCN_Block: Single TCN block with depthwise and pointwise conv.
+    ModernTCN_Stage: Stack of TCN blocks.
+    MultiPatchFormer_FeedForward: FFN for transformer encoder.
+    MultiPatchFormer_Encoder: Transformer-like encoder module.
+    ConvTimeNet_ConvEncoder: Stack of convolutional encoder layers.
+    ConvTimeNet_ConvEncoderLayer: Single conv encoder layer with optional re-param.
+    ConvTimeNet_SublayerConnection: Residual connection with optional parameter.
+
+Utility Functions:
+    ModernTCN_get_conv1d, ModernTCN_get_bn, ModernTCN_conv_bn,
+    ModernTCN_fuse_bn, ConvTimeNet_get_activation_fn
+"""
+
 
 class AttentionLayer(nn.Module):
     def __init__(self, attention, d_model, n_heads, d_keys=None,
@@ -50,7 +79,6 @@ class AttentionLayer(nn.Module):
         return self.out_projection(out), attn
 
 
-
 class FullAttention(nn.Module):
     def __init__(self, mask_flag=True, factor=5, scale=None, attention_dropout=0.1, output_attention=False):
         super(FullAttention, self).__init__()
@@ -81,7 +109,6 @@ class FullAttention(nn.Module):
             return V.contiguous(), None
 
 
-
 class TriangularCausalMask():
     def __init__(self, B, L, device="cpu"):
         mask_shape = [B, 1, L, L]
@@ -97,6 +124,7 @@ class ModernTCN_moving_avg(nn.Module):
     """
     Moving average block to highlight the trend of time series
     """
+
     def __init__(self, kernel_size, stride):
         super(ModernTCN_moving_avg, self).__init__()
         self.kernel_size = kernel_size
@@ -116,6 +144,7 @@ class ModernTCN_series_decomp(nn.Module):
     """
     Series decomposition block
     """
+
     def __init__(self, kernel_size):
         super(ModernTCN_series_decomp, self).__init__()
         self.moving_avg = ModernTCN_moving_avg(kernel_size, stride=1)
@@ -178,13 +207,14 @@ class ModernTCN_RevIN(nn.Module):
         if self.affine:
             self._init_params()
 
-    def forward(self, x, mode:str):
+    def forward(self, x, mode: str):
         if mode == 'norm':
             self._get_statistics(x)
             x = self._normalize(x)
         elif mode == 'denorm':
             x = self._denormalize(x)
-        else: raise NotImplementedError
+        else:
+            raise NotImplementedError
         return x
 
     def _init_params(self):
@@ -193,9 +223,9 @@ class ModernTCN_RevIN(nn.Module):
         self.affine_bias = nn.Parameter(torch.zeros(self.num_features))
 
     def _get_statistics(self, x):
-        dim2reduce = tuple(range(1, x.ndim-1))
+        dim2reduce = tuple(range(1, x.ndim - 1))
         if self.subtract_last:
-            self.last = x[:,-1,:].unsqueeze(1)
+            self.last = x[:, -1, :].unsqueeze(1)
         else:
             self.mean = torch.mean(x, dim=dim2reduce, keepdim=True).detach()
         self.stdev = torch.sqrt(torch.var(x, dim=dim2reduce, keepdim=True, unbiased=False) + self.eps).detach()
@@ -214,13 +244,14 @@ class ModernTCN_RevIN(nn.Module):
     def _denormalize(self, x):
         if self.affine:
             x = x - self.affine_bias
-            x = x / (self.affine_weight + self.eps*self.eps)
+            x = x / (self.affine_weight + self.eps * self.eps)
         x = x * self.stdev
         if self.subtract_last:
             x = x + self.last
         else:
             x = x + self.mean
         return x
+
 
 class ModernTCN_LayerNorm(nn.Module):
 
@@ -229,7 +260,6 @@ class ModernTCN_LayerNorm(nn.Module):
         self.norm = nn.Layernorm(channels)
 
     def forward(self, x):
-
         B, M, D, N = x.shape
         x = x.permute(0, 1, 3, 2)
         x = x.reshape(B * M, N, D)
@@ -239,6 +269,7 @@ class ModernTCN_LayerNorm(nn.Module):
         x = x.permute(0, 1, 3, 2)
         return x
 
+
 def ModernTCN_get_conv1d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias):
     return nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride,
                      padding=padding, dilation=dilation, groups=groups, bias=bias)
@@ -247,17 +278,19 @@ def ModernTCN_get_conv1d(in_channels, out_channels, kernel_size, stride, padding
 def ModernTCN_get_bn(channels):
     return nn.BatchNorm1d(channels)
 
-def ModernTCN_conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups, dilation=1,bias=False):
+
+def ModernTCN_conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups, dilation=1, bias=False):
     if padding is None:
         padding = kernel_size // 2
     result = nn.Sequential()
-    result.add_module('conv', ModernTCN_get_conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                         stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias))
+    result.add_module('conv',
+                      ModernTCN_get_conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                           stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias))
     result.add_module('bn', ModernTCN_get_bn(out_channels))
     return result
 
-def ModernTCN_fuse_bn(conv, bn):
 
+def ModernTCN_fuse_bn(conv, bn):
     kernel = conv.weight
     running_mean = bn.running_mean
     running_var = bn.running_var
@@ -267,6 +300,7 @@ def ModernTCN_fuse_bn(conv, bn):
     std = (running_var + eps).sqrt()
     t = (gamma / std).reshape(-1, 1, 1)
     return kernel * t, beta - running_mean * gamma / std
+
 
 class ModernTCN_ReparamLargeKernelConv(nn.Module):
 
@@ -283,14 +317,15 @@ class ModernTCN_ReparamLargeKernelConv(nn.Module):
             self.lkb_reparam = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
                                          stride=stride, padding=padding, dilation=1, groups=groups, bias=True)
         else:
-            self.lkb_origin = ModernTCN_conv_bn(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                        stride=stride, padding=padding, dilation=1, groups=groups,bias=False)
+            self.lkb_origin = ModernTCN_conv_bn(in_channels=in_channels, out_channels=out_channels,
+                                                kernel_size=kernel_size,
+                                                stride=stride, padding=padding, dilation=1, groups=groups, bias=False)
             if small_kernel is not None:
                 assert small_kernel <= kernel_size, 'The kernel size for re-param cannot be larger than the large kernel!'
                 self.small_conv = ModernTCN_conv_bn(in_channels=in_channels, out_channels=out_channels,
-                                            kernel_size=small_kernel,
-                                            stride=stride, padding=small_kernel // 2, groups=groups, dilation=1,bias=False)
-
+                                                    kernel_size=small_kernel,
+                                                    stride=stride, padding=small_kernel // 2, groups=groups, dilation=1,
+                                                    bias=False)
 
     def forward(self, inputs):
 
@@ -302,17 +337,17 @@ class ModernTCN_ReparamLargeKernelConv(nn.Module):
                 out += self.small_conv(inputs)
         return out
 
-    def PaddingTwoEdge1d(self,x,pad_length_left,pad_length_right,pad_values=0):
+    def PaddingTwoEdge1d(self, x, pad_length_left, pad_length_right, pad_values=0):
 
-        D_out,D_in,ks=x.shape
-        if pad_values ==0:
-            pad_left = torch.zeros(D_out,D_in,pad_length_left)
-            pad_right = torch.zeros(D_out,D_in,pad_length_right)
+        D_out, D_in, ks = x.shape
+        if pad_values == 0:
+            pad_left = torch.zeros(D_out, D_in, pad_length_left)
+            pad_right = torch.zeros(D_out, D_in, pad_length_right)
         else:
             pad_left = torch.ones(D_out, D_in, pad_length_left) * pad_values
             pad_right = torch.ones(D_out, D_in, pad_length_right) * pad_values
-        x = torch.cat([pad_left,x],dims=-1)
-        x = torch.cat([x,pad_right],dims=-1)
+        x = torch.cat([pad_left, x], dims=-1)
+        x = torch.cat([x, pad_right], dims=-1)
         return x
 
     def get_equivalent_kernel_bias(self):
@@ -337,16 +372,17 @@ class ModernTCN_ReparamLargeKernelConv(nn.Module):
         if hasattr(self, 'small_conv'):
             self.__delattr__('small_conv')
 
+
 class ModernTCN_Block(nn.Module):
     def __init__(self, large_size, small_size, dmodel, dff, nvars, small_kernel_merged=False, drop=0.1):
-
         super(ModernTCN_Block, self).__init__()
         self.dw = ModernTCN_ReparamLargeKernelConv(in_channels=nvars * dmodel, out_channels=nvars * dmodel,
-                                         kernel_size=large_size, stride=1, groups=nvars * dmodel,
-                                         small_kernel=small_size, small_kernel_merged=small_kernel_merged, nvars=nvars)
+                                                   kernel_size=large_size, stride=1, groups=nvars * dmodel,
+                                                   small_kernel=small_size, small_kernel_merged=small_kernel_merged,
+                                                   nvars=nvars)
         self.norm = nn.BatchNorm1d(dmodel)
 
-        #convffn1
+        # convffn1
         self.ffn1pw1 = nn.Conv1d(in_channels=nvars * dmodel, out_channels=nvars * dff, kernel_size=1, stride=1,
                                  padding=0, dilation=1, groups=nvars)
         self.ffn1act = nn.GELU()
@@ -355,7 +391,7 @@ class ModernTCN_Block(nn.Module):
         self.ffn1drop1 = nn.Dropout(drop)
         self.ffn1drop2 = nn.Dropout(drop)
 
-        #convffn2
+        # convffn2
         self.ffn2pw1 = nn.Conv1d(in_channels=nvars * dmodel, out_channels=nvars * dff, kernel_size=1, stride=1,
                                  padding=0, dilation=1, groups=dmodel)
         self.ffn2act = nn.GELU()
@@ -364,15 +400,15 @@ class ModernTCN_Block(nn.Module):
         self.ffn2drop1 = nn.Dropout(drop)
         self.ffn2drop2 = nn.Dropout(drop)
 
-        self.ffn_ratio = dff//dmodel
-    def forward(self,x):
+        self.ffn_ratio = dff // dmodel
 
+    def forward(self, x):
         input = x
         B, M, D, N = x.shape
-        x = x.reshape(B,M*D,N)
+        x = x.reshape(B, M * D, N)
         x = self.dw(x)
-        x = x.reshape(B,M,D,N)
-        x = x.reshape(B*M,D,N)
+        x = x.reshape(B, M, D, N)
+        x = x.reshape(B * M, D, N)
         x = self.norm(x)
         x = x.reshape(B, M, D, N)
         x = x.reshape(B, M * D, N)
@@ -394,7 +430,8 @@ class ModernTCN_Stage(nn.Module):
         d_ffn = dmodel * ffn_ratio
         blks = []
         for i in range(num_blocks):
-            blk = ModernTCN_Block(large_size=large_size, small_size=small_size, dmodel=dmodel, dff=d_ffn, nvars=nvars, small_kernel_merged=small_kernel_merged, drop=drop)
+            blk = ModernTCN_Block(large_size=large_size, small_size=small_size, dmodel=dmodel, dff=d_ffn, nvars=nvars,
+                                  small_kernel_merged=small_kernel_merged, drop=drop)
             blks.append(blk)
 
         self.blocks = nn.ModuleList(blks)
@@ -425,12 +462,12 @@ class MultiPatchFormer_FeedForward(nn.Module):
 
 class MultiPatchFormer_Encoder(nn.Module):
     def __init__(
-        self,
-        d_model: int,
-        mha: AttentionLayer,
-        d_hidden: int,
-        dropout: float = 0,
-        channel_wise=False,
+            self,
+            d_model: int,
+            mha: AttentionLayer,
+            d_hidden: int,
+            dropout: float = 0,
+            channel_wise=False,
     ):
         super(MultiPatchFormer_Encoder, self).__init__()
 
@@ -477,9 +514,10 @@ class ConvTimeNet_ConvEncoder(nn.Module):
                  n_layers=3, enable_res_param=False, norm='batch', re_param=False, device='cuda:0'):
         super(ConvTimeNet_ConvEncoder, self).__init__()
         self.layers = nn.ModuleList([ConvTimeNet_ConvEncoderLayer(kernel_size[i], d_model, d_ff=d_ff, dropout=dropout,
-                                                       activation=activation, enable_res_param=enable_res_param,
-                                                       norm=norm,
-                                                       re_param=re_param, device=device) \
+                                                                  activation=activation,
+                                                                  enable_res_param=enable_res_param,
+                                                                  norm=norm,
+                                                                  re_param=re_param, device=device) \
                                      for i in range(n_layers)])
 
     def forward(self, src):
@@ -500,9 +538,12 @@ class ConvTimeNet_ConvEncoderLayer(nn.Module):
         if self.re_param:
             self.large_ks = kernel_size
             self.small_ks = small_ks
-            self.DW_conv_large = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2, groups=d_model)
-            self.DW_conv_small = nn.Conv1d(d_model, d_model, self.small_ks, stride=1, padding=self.small_ks // 2, groups=d_model)
-            self.DW_infer = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2, groups=d_model)
+            self.DW_conv_large = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2,
+                                           groups=d_model)
+            self.DW_conv_small = nn.Conv1d(d_model, d_model, self.small_ks, stride=1, padding=self.small_ks // 2,
+                                           groups=d_model)
+            self.DW_infer = nn.Conv1d(d_model, d_model, self.large_ks, stride=1, padding=self.large_ks // 2,
+                                      groups=d_model)
         else:
             self.DW_conv = nn.Conv1d(d_model, d_model, kernel_size, stride=1, padding=kernel_size // 2, groups=d_model)
 
@@ -560,11 +601,14 @@ class ConvTimeNet_ConvEncoderLayer(nn.Module):
 
         return src
 
-def ConvTimeNet_get_activation_fn(activation):
-    if activation == "relu": return nn.ReLU()
-    elif activation == "gelu": return nn.GELU()
-    else: return activation()
 
+def ConvTimeNet_get_activation_fn(activation):
+    if activation == "relu":
+        return nn.ReLU()
+    elif activation == "gelu":
+        return nn.GELU()
+    else:
+        return activation()
 
 
 class ConvTimeNet_SublayerConnection(nn.Module):
