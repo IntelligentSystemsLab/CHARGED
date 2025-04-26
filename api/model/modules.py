@@ -4,20 +4,47 @@
 # @Email              : guozh29@mail2.sysu.edu.cn
 # @Last Modified By   : GZH
 # @Last Modified Time : 2025/4/11 2:14
+
 import math
+import warnings
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from joblib import Parallel, delayed
 from pmdarima import auto_arima
 from statsmodels.tsa.ar_model import AutoReg
-import torch.nn.functional as F
-import warnings
 from einops import rearrange
 
-from api.model.layers import ModernTCN_RevIN, ModernTCN_Stage, ModernTCN_Flatten_Head, AttentionLayer, FullAttention, \
-    MultiPatchFormer_Encoder, ConvTimeNet_ConvEncoder, ConvTimeNet_get_activation_fn
+from api.model.layers import (
+    ModernTCN_RevIN,
+    ModernTCN_Stage,
+    ModernTCN_Flatten_Head,
+    AttentionLayer,
+    FullAttention,
+    MultiPatchFormer_Encoder,
+    ConvTimeNet_ConvEncoder,
+    ConvTimeNet_get_activation_fn,
+)
+
+"""
+Module implementing a variety of time-series forecasting algorithms and neural models.
+
+Classes:
+    Lo: Last-observation baseline predictor.
+    Ar: Autoregressive model predictor.
+    Arima: ARIMA model predictor with automated order selection.
+    Fcnn: Fully-connected neural predictor.
+    Lstm: LSTM-based sequence predictor.
+    SegRNN: Segmented RNN forecasting model.
+    FreTS: Frequency-domain temporal-spatial model.
+    ModernTCN: Temporal convolutional network with Reversible IN and re-parameterization.
+    MultiPatchFormer: Multi-patch transformer encoder-based forecaster.
+    ConvTimeNet: Convolutional time-series encoder.
+
+Each class provides a `predict` or `forward` method for inference.
+"""
 
 
 class Lo:
@@ -43,7 +70,6 @@ class Lo:
 
 class Ar:
     def __init__(self, pred_len, lags=1):
-
         self.pred_len = pred_len
         self.lags = lags
 
@@ -67,7 +93,7 @@ class Ar:
             return pred_node
 
         preds = Parallel(n_jobs=10)(delayed(fit_predict)(j) for j in range(node))
-        preds=np.array(preds).T
+        preds = np.array(preds).T
         return preds
 
 
@@ -98,7 +124,7 @@ class Arima:
             return pred_node
 
         preds = Parallel(n_jobs=10)(delayed(fit_predict)(j) for j in range(node))
-        preds=np.array(preds).T
+        preds = np.array(preds).T
         return preds
 
 
@@ -153,7 +179,7 @@ class Lstm(nn.Module):
 
 class SegRNN(nn.Module):
 
-    def __init__(self, seq_len,pred_len,n_fea,seg_len=1,d_model=256,dropout=0.1):
+    def __init__(self, seq_len, pred_len, n_fea, seg_len=1, d_model=256, dropout=0.1):
         super(SegRNN, self).__init__()
 
         # get parameters
@@ -173,7 +199,7 @@ class SegRNN(nn.Module):
             nn.ReLU()
         )
         self.rnn = nn.GRU(input_size=self.d_model, hidden_size=self.d_model, num_layers=1, bias=True,
-                              batch_first=True, bidirectional=False)
+                          batch_first=True, bidirectional=False)
         self.pos_emb = nn.Parameter(torch.randn(self.seg_num_y, self.d_model // 2))
         self.channel_emb = nn.Parameter(torch.randn(self.enc_in, self.d_model // 2))
 
@@ -190,13 +216,13 @@ class SegRNN(nn.Module):
 
         # normalization and permute     b,s,c -> b,c,s
         seq_last = x[:, -1:, :].detach()
-        x = (x - seq_last) # b,c,s
+        x = (x - seq_last)  # b,c,s
 
         # segment and embedding    b,c,s -> bc,n,w -> bc,n,d
         x = self.valueEmbedding(x.reshape(-1, self.seg_num_x, self.seg_len))
 
         # encoding
-        _, hn = self.rnn(x) # bc,n,d  1,bc,d
+        _, hn = self.rnn(x)  # bc,n,d  1,bc,d
 
         # m,d//2 -> 1,m,d//2 -> c,m,d//2
         # c,d//2 -> c,1,d//2 -> c,m,d//2
@@ -204,9 +230,9 @@ class SegRNN(nn.Module):
         pos_emb = torch.cat([
             self.pos_emb.unsqueeze(0).repeat(self.enc_in, 1, 1),
             self.channel_emb.unsqueeze(1).repeat(1, self.seg_num_y, 1)
-        ], dim=-1).view(-1, 1, self.d_model).repeat(batch_size,1,1)
+        ], dim=-1).view(-1, 1, self.d_model).repeat(batch_size, 1, 1)
 
-        _, hy = self.rnn(pos_emb, hn.repeat(1, 1, self.seg_num_y).view(1, -1, self.d_model)) # bcm,1,d  1,bcm,d
+        _, hy = self.rnn(pos_emb, hn.repeat(1, 1, self.seg_num_y).view(1, -1, self.d_model))  # bcm,1,d  1,bcm,d
 
         # 1,bcm,d -> 1,bcm,w -> b,c,s
         y = self.predict(hy).view(-1, self.enc_in, self.pred_len)
@@ -220,7 +246,7 @@ class SegRNN(nn.Module):
         # Encoder
         return self.encoder(x_enc)
 
-    def forward(self,feat, extra_feat=None):
+    def forward(self, feat, extra_feat=None):
         x = feat.unsqueeze(-1)
         if extra_feat is not None:
             x = torch.cat([feat.unsqueeze(-1), extra_feat], dim=-1)
@@ -246,8 +272,9 @@ class SegRNN(nn.Module):
         out = out.view(B_ori, node)
         return out
 
+
 class FreTS(nn.Module):
-    def __init__(self, seq_len,pred_len,n_fea,embed_size = 128,hidden_size = 256,sparsity_threshold = 0.01,scale = 0.02):
+    def __init__(self, seq_len, pred_len, n_fea, embed_size=128, hidden_size=256, sparsity_threshold=0.01, scale=0.02):
         super(FreTS, self).__init__()
         self.embed_size = embed_size
         self.hidden_size = hidden_size
@@ -362,15 +389,17 @@ class FreTS(nn.Module):
         return out
 
 
-
 class ModernTCN(nn.Module):
-    def __init__(self,n_fea, seq_len, pred_len,patch_size=16,patch_stride=8, downsample_ratio=2, ffn_ratio=2, num_blocks=[1,1,1,1],
-                 large_size=[31,29,27,13], small_size=[5,5,5,5], dims=[256,256,256,256], dw_dims=[256,256,256,256],
-                 small_kernel_merged=False, backbone_dropout=0.1, head_dropout=0.1, use_multi_scale=True, revin=True, affine=True,
+    def __init__(self, n_fea, seq_len, pred_len, patch_size=16, patch_stride=8, downsample_ratio=2, ffn_ratio=2,
+                 num_blocks=[1, 1, 1, 1],
+                 large_size=[31, 29, 27, 13], small_size=[5, 5, 5, 5], dims=[256, 256, 256, 256],
+                 dw_dims=[256, 256, 256, 256],
+                 small_kernel_merged=False, backbone_dropout=0.1, head_dropout=0.1, use_multi_scale=True, revin=True,
+                 affine=True,
                  subtract_last=False, individual=False, ):
 
         super(ModernTCN, self).__init__()
-        c_in=n_fea
+        c_in = n_fea
         target_window = pred_len
         # RevIN
         self.revin = revin
@@ -386,7 +415,7 @@ class ModernTCN(nn.Module):
 
         self.num_stage = len(num_blocks)
         if self.num_stage > 1:
-            for i in range(self.num_stage-1):
+            for i in range(self.num_stage - 1):
                 downsample_layer = nn.Sequential(
                     nn.BatchNorm1d(dims[i]),
                     nn.Conv1d(dims[i], dims[i + 1], kernel_size=downsample_ratio, stride=downsample_ratio),
@@ -401,51 +430,50 @@ class ModernTCN(nn.Module):
         self.num_stage = len(num_blocks)
         self.stages = nn.ModuleList()
         for stage_idx in range(self.num_stage):
-            layer = ModernTCN_Stage(ffn_ratio, num_blocks[stage_idx], large_size[stage_idx], small_size[stage_idx], dmodel=dims[stage_idx],
-                          dw_model=dw_dims[stage_idx], nvars=n_fea, small_kernel_merged=small_kernel_merged, drop=backbone_dropout)
+            layer = ModernTCN_Stage(ffn_ratio, num_blocks[stage_idx], large_size[stage_idx], small_size[stage_idx],
+                                    dmodel=dims[stage_idx],
+                                    dw_model=dw_dims[stage_idx], nvars=n_fea, small_kernel_merged=small_kernel_merged,
+                                    drop=backbone_dropout)
             self.stages.append(layer)
-
-
 
         # head
         patch_num = seq_len // patch_stride
         self.n_vars = c_in
         self.individual = individual
-        d_model = dims[self.num_stage-1]
+        d_model = dims[self.num_stage - 1]
 
         if use_multi_scale:
             self.head_nf = d_model * patch_num
             self.head = ModernTCN_Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window,
-                                     head_dropout=head_dropout)
+                                               head_dropout=head_dropout)
         else:
 
-            if patch_num % pow(downsample_ratio,(self.num_stage - 1)) == 0:
-                self.head_nf = d_model * patch_num // pow(downsample_ratio,(self.num_stage - 1))
+            if patch_num % pow(downsample_ratio, (self.num_stage - 1)) == 0:
+                self.head_nf = d_model * patch_num // pow(downsample_ratio, (self.num_stage - 1))
             else:
-                self.head_nf = d_model * (patch_num // pow(downsample_ratio, (self.num_stage - 1))+1)
+                self.head_nf = d_model * (patch_num // pow(downsample_ratio, (self.num_stage - 1)) + 1)
             self.head = ModernTCN_Flatten_Head(self.individual, self.n_vars, self.head_nf, target_window,
-                                     head_dropout=head_dropout)
+                                               head_dropout=head_dropout)
 
         self.final_linear = nn.Linear(n_fea, 1)
 
-
     def forward_feature(self, x):
 
-        B,M,L=x.shape
+        B, M, L = x.shape
         x = x.unsqueeze(-2)
 
         for i in range(self.num_stage):
             B, M, D, N = x.shape
             x = x.reshape(B * M, D, N)
-            if i==0:
+            if i == 0:
                 if self.patch_size != self.patch_stride:
                     pad_len = self.patch_size - self.patch_stride
-                    pad = x[:,:,-1:].repeat(1,1,pad_len)
-                    x = torch.cat([x,pad],dim=-1)
+                    pad = x[:, :, -1:].repeat(1, 1, pad_len)
+                    x = torch.cat([x, pad], dim=-1)
             else:
                 if N % self.downsample_ratio != 0:
                     pad_len = self.downsample_ratio - (N % self.downsample_ratio)
-                    x = torch.cat([x, x[:, :, -pad_len:]],dim=-1)
+                    x = torch.cat([x, x[:, :, -pad_len:]], dim=-1)
             x = self.downsample_layers[i](x)
             _, D_, N_ = x.shape
             x = x.reshape(B, M, D_, N_)
@@ -493,9 +521,8 @@ class ModernTCN(nn.Module):
                 m.merge_kernel()
 
 
-
 class MultiPatchFormer(nn.Module):
-    def __init__(self, seq_len,pred_len,n_fea,e_layers=2,d_model=256,d_ff=1024,n_heads=8,dropout=0.1):
+    def __init__(self, seq_len, pred_len, n_fea, e_layers=2, d_model=256, d_ff=1024, n_heads=8, dropout=0.1):
         super(MultiPatchFormer, self).__init__()
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -665,11 +692,11 @@ class MultiPatchFormer(nn.Module):
         ).permute(0, 2, 1)
 
         encoding_patch = (
-            torch.cat(
-                (encoding_patch1, encoding_patch2, encoding_patch3, encoding_patch4),
-                dim=-1,
-            )
-            + self.pe
+                torch.cat(
+                    (encoding_patch1, encoding_patch2, encoding_patch3, encoding_patch4),
+                    dim=-1,
+                )
+                + self.pe
         )
         # Temporal encoding
         for i in range(self.N):
@@ -819,8 +846,9 @@ class ConvTimeNet(nn.Module):
 
         # Encoder
         self.encoder = ConvTimeNet_ConvEncoder(d_model, d_ff, kernel_size=dw_ks, dropout=dropout, activation=act, \
-                                    n_layers=n_layers, enable_res_param=enable_res_param, norm=norm, re_param=re_param,
-                                    device=device)
+                                               n_layers=n_layers, enable_res_param=enable_res_param, norm=norm,
+                                               re_param=re_param,
+                                               device=device)
 
         self.flatten = nn.Flatten()
 
@@ -855,7 +883,7 @@ class ConvTimeNet(nn.Module):
         while start_idx < x_enc.shape[0]:
             try:
                 x_chunk = x_enc[start_idx: start_idx + current_chunk_size]
-                x_chunk= x_chunk.permute(0,2,1)
+                x_chunk = x_chunk.permute(0, 2, 1)
                 if self.use_embed:
                     u = self.W_P(x_chunk.transpose(2, 1))
                 z = self.encoder(u.transpose(2, 1).contiguous())
