@@ -1,11 +1,8 @@
 @echo off
 
 set cities=AMS SZH SPO JHB LOA MEL
-@REM set cities=AMS
-@REM set models=arima ar lo fcnn lstm segrnn frets moderntcn multipatchformer
-set models=moderntcn multipatchformer
-@REM set folds=1 2 3 4 5 6
-set folds=6 5 4 3 2 1
+set models=arima ar segrnn frets convtimenet multipatchformer
+set folds=1 2 3 4 5 6
 
 for %%m in (%models%) do (
     for %%c in (%cities%) do (
